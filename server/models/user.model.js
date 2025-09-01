@@ -2,25 +2,35 @@
 import mongoose from 'mongoose';
 
 const userSchema = new mongoose.Schema({
+  // ... username, email, password fields
   username: {
     type: String,
     required: true,
     unique: true,
-    trim: true, // Removes whitespace from both ends
+    trim: true,
   },
   email: {
     type: String,
     required: true,
     unique: true,
     trim: true,
-    lowercase: true, // Stores the email in lowercase
+    lowercase: true,
   },
   password: {
     type: String,
     required: true,
   },
+  // Add these two new fields
+  passwordResetToken: String,
+  passwordResetExpires: Date,
+
+  isVerified: {
+    type: Boolean,
+    default: false,
+  },
+  verificationToken: String,
 }, {
-  timestamps: true, // Automatically adds createdAt and updatedAt fields
+  timestamps: true,
 });
 
 const User = mongoose.model('User', userSchema);
