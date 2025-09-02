@@ -325,6 +325,9 @@
   .bg-green-100 {
     background-color: var(--color-green-100);
   }
+  .bg-indigo-500 {
+    background-color: var(--color-indigo-500);
+  }
   .bg-indigo-600 {
     background-color: var(--color-indigo-600);
   }
