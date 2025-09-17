@@ -3,6 +3,8 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import mongoose from 'mongoose';
 import authRoutes from './routes/auth.routes.js';
+import messageRoutes from './routes/message.routes.js';
+import { protectRoute } from './middleware/protectRoute.js';
 
 dotenv.config();
 
@@ -12,6 +14,8 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 app.use('/api/auth', authRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/messages', protectRoute, messageRoutes);
 
 app.get('/', (req, res) => {
   res.send('API is running...');
