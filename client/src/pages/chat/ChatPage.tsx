@@ -42,13 +42,17 @@ const ChatPage = () => {
     e.preventDefault();
     if (newMessage.trim() === '') return;
 
+    const messageData = {
+      text: newMessage,
+      sender: 'You',
+      createdAt: Timestamp.now(),
+    };
+
+    // Log the object right before sending
+    console.log("Attempting to send this data:", messageData);
+
     try {
-      // Add a new document to the "messages" collection
-      await addDoc(messagesCollectionRef, {
-        text: newMessage,
-        sender: 'You', // In a real app, this would come from an auth context
-        createdAt: Timestamp.now(),
-      });
+      await addDoc(messagesCollectionRef, messageData);
       setNewMessage('');
     } catch (error) {
       console.error("Error sending message: ", error);
