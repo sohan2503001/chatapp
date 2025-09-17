@@ -13,8 +13,15 @@ export const protectRoute = async (req, res, next) => {
       return res.status(401).json({ error: "Not authorized, token failed" });
     }
 
-    // Attach the user to the request object
-    req.user = await User.findById(decoded.userId).select("-password");
+    // --- The Fix is on this line ---
+    // We need to look for the user ID inside decoded.user.id
+    const user = await User.findById(decoded.user.id).select("-password");
+    
+    if (!user) {
+        return res.status(404).json({ error: "User not found" });
+    }
+
+    req.user = user;
     
     next();
   } catch (error) {

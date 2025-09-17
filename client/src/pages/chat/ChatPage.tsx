@@ -2,7 +2,8 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, addDoc, query, orderBy, onSnapshot, Timestamp } from 'firebase/firestore';
-import { db } from '../../firebase'; // Import the db instance from your firebase.ts file
+import { db } from '../../firebase';
+import useGetUsers from "../../hooks/useGetUsers";
 
 // Define the structure of a message object
 interface Message {
@@ -14,6 +15,7 @@ interface Message {
 
 const ChatPage = () => {
   const navigate = useNavigate();
+  const { users, loading } = useGetUsers();
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const messagesCollectionRef = collection(db, 'messages');
@@ -64,6 +66,19 @@ const ChatPage = () => {
       {/* Sidebar */}
       <aside className="w-1/4 bg-gray-800 text-white p-4">
         <h2 className="text-xl font-bold mb-4">Chat App</h2>
+        <h2 className="text-xl font-bold mb-4">Users</h2>
+        <ul>
+          {/* Map over the users and display them */}
+          {loading ? (
+            <p>Loading users...</p>
+          ) : (
+            users.map((user) => (
+              <li key={user._id} className="p-2 rounded-md hover:bg-gray-700 cursor-pointer">
+                {user.username}
+              </li>
+            ))
+          )}
+        </ul>
         <button onClick={handleLogout} className="w-full mt-6 px-4 py-2 text-white bg-red-600 rounded-md hover:bg-red-700">
           Logout
         </button>
