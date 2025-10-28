@@ -114,7 +114,12 @@ router.post('/login', async (req, res) => {
       { expiresIn: '1h' }, // Token expires in 1 hour
       (err, token) => {
         if (err) throw err;
-        res.json({ token }); // 4. Send the token to the client
+        res.json({ token,
+          user: {
+            _id: user._id,
+            username: user.username,
+            email: user.email,
+          } }); // Send the token to the client and user info
       }
     );
   } catch (error) {

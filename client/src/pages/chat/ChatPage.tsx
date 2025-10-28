@@ -5,6 +5,7 @@ import { collection, addDoc, query, orderBy, onSnapshot, Timestamp } from 'fireb
 import { db } from '../../firebase';
 import useGetUsers from "../../hooks/useGetUsers";
 import useConversation from "../../store/useConversation";
+import useAuthStore from '../../store/useAuthStore';
 
 // Define the structure of a message object
 interface Message {
@@ -18,6 +19,7 @@ const ChatPage = () => {
   const navigate = useNavigate();
   const { users, loading } = useGetUsers();
   const { selectedConversation, setSelectedConversation } = useConversation();
+  const { setToken, setAuthUser } = useAuthStore();
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const messagesCollectionRef = collection(db, 'messages');
@@ -38,8 +40,12 @@ const ChatPage = () => {
   }, []);
 
   const handleLogout = () => {
-    localStorage.removeItem('token');
+    // Clear all state on logout
+    setToken(null);
+    setAuthUser(null);
+    setSelectedConversation(null);
     navigate('/login');
+    // localStorage.removeItem('token');
   };
 
   const handleSendMessage = async (e: FormEvent<HTMLFormElement>) => {

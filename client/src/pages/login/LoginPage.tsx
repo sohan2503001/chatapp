@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'; // 1. Import useNavigate
+import useAuthStore from '../../store/useAuthStore';
 
 
 const LoginPage = () => {
@@ -10,7 +11,8 @@ const LoginPage = () => {
     email: '',
     password: '',
   });
-  const navigate = useNavigate(); // 2. Initialize the hook
+  const navigate = useNavigate(); // Initialize the hook
+  const { setToken, setAuthUser } = useAuthStore(); // getSetters from the auth store
   const [searchParams] = useSearchParams();
   const isVerified = searchParams.get('verified') === 'true';
 
@@ -22,11 +24,18 @@ const LoginPage = () => {
     e.preventDefault();
     try {
       const response = await axios.post('http://localhost:5000/api/auth/login', formData);
+
+      // Get token and user from response
+      const { token, user } = response.data;
+
+      // Save to store
+      setToken(token);
+      setAuthUser(user);
       
       // Store the token
-      localStorage.setItem('token', response.data.token);
+      // localStorage.setItem('token', response.data.token);
 
-      // 3. Redirect to the chat page
+      // Redirect to the chat page
       navigate('/chat'); 
       
     } catch (error) {
