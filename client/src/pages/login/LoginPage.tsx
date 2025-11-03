@@ -1,7 +1,8 @@
 // client/src/pages/login/LoginPage.tsx
 
 import React, { useState } from 'react';
-import axios from 'axios';
+import api from '../../api/api';
+import { isAxiosError } from 'axios';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'; // 1. Import useNavigate
 import useAuthStore from '../../store/useAuthStore';
 
@@ -23,7 +24,8 @@ const LoginPage = () => {
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     try {
-      const response = await axios.post('http://localhost:5000/api/auth/login', formData);
+      // FIX 1: Use 'api.post' with the relative path and formData
+      const response = await api.post('/auth/login', formData);
 
       // Get token and user from response
       const { token, user } = response.data;
@@ -31,16 +33,18 @@ const LoginPage = () => {
       // Save to store
       setToken(token);
       setAuthUser(user);
-      
-      // Store the token
-      // localStorage.setItem('token', response.data.token);
 
       // Redirect to the chat page
       navigate('/chat'); 
       
     } catch (error) {
+      // FIX 2: Add specific error handling
+      if (isAxiosError(error) && error.response) {
+        alert(error.response.data.message);
+      } else {
+        alert('Login failed. Please check your credentials.');
+      }
       console.error('Login error:', error);
-      alert('Login failed. Please check your credentials.');
     }
   };
 

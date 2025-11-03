@@ -1,6 +1,7 @@
 // client/src/hooks/useGetUsers.ts
 import { useEffect, useState } from "react";
-import axios from "axios";
+import api from '../api/api';
+import { isAxiosError } from 'axios';
 
 interface User {
   _id: string;
@@ -16,22 +17,23 @@ const useGetUsers = () => {
     const getUsers = async () => {
       setLoading(true);
       try {
-        const token = localStorage.getItem("token");
-        const res = await axios.get("http://localhost:5000/api/users", {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
+        // 1. Use the 'api' instance. No headers or token needed.
+        const res = await api.get('/users');
         setUsers(res.data);
       } catch (error) {
-        console.error("Error fetching users:", error);
+        // 2. Add improved error handling
+        if (isAxiosError(error) && error.response) {
+          console.error("Error fetching users:", error.response.data.message);
+        } else {
+          console.error("Error fetching users:", (error as Error).message);
+        }
       } finally {
         setLoading(false);
       }
     };
 
     getUsers();
-  }, []);
+  }, [setUsers]); // 3. Add setUsers to the dependency array
 
   return { users, loading };
 };

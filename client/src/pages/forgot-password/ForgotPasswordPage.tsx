@@ -1,23 +1,30 @@
 // client/src/pages/forgot-password/ForgotPasswordPage.tsx
 import React, { useState } from 'react';
-import axios from 'axios';
+import api from '../../api/api';
 import { Link } from 'react-router-dom';
+import { isAxiosError } from 'axios';
 
 const ForgotPasswordPage = () => {
   const [email, setEmail] = useState('');
   const [message, setMessage] = useState('');
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setMessage('');
-    try {
-      const response = await axios.post('http://localhost:5000/api/auth/forgot-password', { email });
-      setMessage(response.data.message);
-    } catch (error) {
+  e.preventDefault();
+  setMessage('');
+  try {
+    // FIX 1: Use the relative endpoint, not the full URL.
+    const response = await api.post('/auth/forgot-password', { email });
+    setMessage(response.data.message);
+  } catch (error) {
+    // FIX 2: Add specific error checking, just like in RegisterPage.
+    if (isAxiosError(error) && error.response) {
+      setMessage(error.response.data.message);
+    } else {
       setMessage('An error occurred. Please try again.');
-      console.error('Forgot password error:', error);
     }
-  };
+    console.error('Forgot password error:', error);
+  }
+};
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-gray-100">

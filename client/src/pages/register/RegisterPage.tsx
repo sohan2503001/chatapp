@@ -1,7 +1,8 @@
 // client/src/pages/register/RegisterPage.tsx
 
 import React, { useState } from 'react';
-import axios from 'axios';
+import api from '../../api/api';
+import { isAxiosError } from 'axios';
 
 // We no longer need to import the CSS module file
 
@@ -19,12 +20,14 @@ const RegisterPage = () => {
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     try {
-      const response = await axios.post('http://localhost:5000/api/auth/register', formData);
+      // FIX 1: Pass the endpoint and the *data* (formData)
+      const response = await api.post('/auth/register', formData);
+      
       console.log('Registration successful:', response.data);
       alert('Registration successful! Please check your email to verify your account.');
     } catch (error) {
-      // Check if the error is from Axios and has a response from the server
-      if (axios.isAxiosError(error) && error.response) {
+      // FIX 2: Check the error type using the imported isAxiosError
+      if (isAxiosError(error) && error.response) {
         // Display the specific error message from the backend
         alert(error.response.data.message);
       } else {

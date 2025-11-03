@@ -83,47 +83,97 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Check if the user exists
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(400).json({ message: 'Invalid credentials.' });
     }
-
-    // --- Add this verification check ---
+    
     if (!user.isVerified) {
       return res.status(403).json({ message: 'Please verify your email address before logging in.' });
     }
-    // --- End of check ---
 
-    // Compare the provided password with the stored hashed password
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(400).json({ message: 'Invalid credentials.' });
     }
 
-    // If credentials are correct, create a JWT
-    const payload = {
-      user: {
-        id: user.id,
-      },
-    };
+    // --- Start of Token Generation ---
 
-    jwt.sign(
-      payload,
+    // 1. Create the Access Token (short-lived)
+    const accessToken = jwt.sign(
+      { user: { id: user.id } },
       process.env.JWT_SECRET,
-      { expiresIn: '1h' }, // Token expires in 1 hour
-      (err, token) => {
-        if (err) throw err;
-        res.json({ token,
-          user: {
-            _id: user._id,
-            username: user.username,
-            email: user.email,
-          } }); // Send the token to the client and user info
-      }
+      { expiresIn: '15m' } // Expires in 15 minutes
     );
+
+    // 2. Create the Refresh Token (long-lived)
+    const refreshToken = jwt.sign(
+      { user: { id: user.id } },
+      process.env.JWT_REFRESH_SECRET,
+      { expiresIn: '7d' } // Expires in 7 days
+    );
+
+    // 3. Send the Refresh Token as an httpOnly cookie
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true, // Makes it inaccessible to JavaScript
+      secure: process.env.NODE_ENV !== 'development', // Use secure in production
+      sameSite: 'strict', // Helps prevent CSRF
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days in milliseconds
+    });
+
+    // 4. Send the Access Token and user info in the JSON body
+    res.json({
+      token: accessToken, // This is the access token
+      user: {
+        _id: user._id,
+        username: user.username,
+        email: user.email,
+      }
+    });
+    // --- End of Token Generation ---
+
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// ## POST /api/auth/refresh - Issue a new access token ##
+router.post('/refresh', async (req, res) => {
+  // 1. Get the refresh token from the httpOnly cookie
+  const refreshToken = req.cookies.refreshToken;
+  if (!refreshToken) {
+    return res.status(401).json({ message: 'Access denied. No refresh token provided.' });
+  }
+
+  try {
+    // 2. Verify the refresh token
+    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+
+    // 3. Find the user from the token's payload
+    const user = await User.findById(decoded.user.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // 4. Issue a new, short-lived access token
+    const newAccessToken = jwt.sign(
+      { user: { id: user.id } },
+      process.env.JWT_SECRET,
+      { expiresIn: '15m' } // The new token expires in 15 minutes
+    );
+
+    // 5. Send the new access token and user info back
+    res.json({
+      token: newAccessToken,
+      user: {
+        _id: user._id,
+        username: user.username,
+        email: user.email,
+      },
+    });
+  } catch (error) {
+    // If the refresh token is invalid or expired
+    return res.status(403).json({ message: 'Invalid or expired refresh token.' });
   }
 });
 

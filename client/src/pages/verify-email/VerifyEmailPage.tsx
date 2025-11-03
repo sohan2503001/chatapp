@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import api from '../../api/api';
+import { isAxiosError } from 'axios';
 
 const VerifyEmailPage = () => {
   const [status, setStatus] = useState('Verifying your email...');
@@ -17,8 +18,8 @@ const VerifyEmailPage = () => {
       }
 
       try {
-        // Make the API call to the backend to verify the token
-        await axios.get(`http://localhost:5000/api/auth/verify-email/${token}`);
+        // 1. Use the 'api' instance with the relative path
+        await api.get(`/auth/verify-email/${token}`);
         
         // If successful, update status and redirect to login
         setStatus('Email successfully verified! Redirecting to login...');
@@ -27,7 +28,12 @@ const VerifyEmailPage = () => {
         }, 3000); // Wait 3 seconds before redirecting
 
       } catch (error) {
-        setStatus('Verification failed. The link may be invalid or expired.');
+        // 2. Add improved error handling
+        if (isAxiosError(error) && error.response) {
+          setStatus(error.response.data.message);
+        } else {
+          setStatus('Verification failed. The link may be invalid or expired.');
+        }
         console.error('Verification error:', error);
       }
     };

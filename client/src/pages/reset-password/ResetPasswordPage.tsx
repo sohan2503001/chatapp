@@ -1,6 +1,7 @@
 // client/src/pages/reset-password/ResetPasswordPage.tsx
 import React, { useState } from 'react';
-import axios from 'axios';
+import api from '../../api/api';
+import { isAxiosError } from 'axios';
 import { useParams, useNavigate } from 'react-router-dom';
 
 const ResetPasswordPage = () => {
@@ -13,14 +14,21 @@ const ResetPasswordPage = () => {
     e.preventDefault();
     setMessage('');
     try {
-      const response = await axios.post(`http://localhost:5000/api/auth/reset-password/${token}`, { password });
+      // 1. Use the 'api' instance with the relative path
+      const response = await api.post(`/auth/reset-password/${token}`, { password });
+      
       setMessage(response.data.message);
       // Redirect to login page after a short delay
       setTimeout(() => {
         navigate('/login');
       }, 3000);
     } catch (error) {
-      setMessage('Failed to reset password. The link may be invalid or expired.');
+      // 2. Add improved error handling
+      if (isAxiosError(error) && error.response) {
+        setMessage(error.response.data.message);
+      } else {
+        setMessage('Failed to reset password. The link may be invalid or expired.');
+      }
       console.error('Reset password error:', error);
     }
   };

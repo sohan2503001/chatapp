@@ -1,7 +1,8 @@
 // client/src/pages/chat/ChatPage.tsx
 import { useState, useEffect, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import api from '../../api/api';
+import { isAxiosError } from 'axios';
 import { collection, query, orderBy, onSnapshot, Timestamp, where } from 'firebase/firestore';
 import { db } from '../../firebase';
 import useGetUsers from "../../hooks/useGetUsers";
@@ -30,7 +31,7 @@ const ChatPage = () => {
   const navigate = useNavigate();
   const { users, loading: usersLoading } = useGetUsers();
   const { selectedConversation, setSelectedConversation } = useConversation();
-  const { token, authUser, setToken, setAuthUser } = useAuthStore();
+  const { authUser, setToken, setAuthUser } = useAuthStore();
   
   // This loads the history from MongoDB
   const { messages, loading: messagesLoading, setMessages } = useGetMessages();
@@ -39,11 +40,7 @@ const ChatPage = () => {
 
   // This hook listens for NEW real-time messages
   useEffect(() => {
-    // Don't listen until a chat is selected
     if (!selectedConversation || !authUser) return;
-
-    // We record the time the component mounts.
-    // We'll only listen for messages created AFTER this time.
     const listenerStartTime = new Date();
 
     const q = query(
@@ -57,12 +54,10 @@ const ChatPage = () => {
       querySnapshot.forEach((doc) => {
         const data = doc.data() as FirebaseMessage;
         
-        // Filter messages to make sure they belong to the open conversation
         if (
           (data.senderId === authUser._id && data.receiverId === selectedConversation._id) ||
           (data.senderId === selectedConversation._id && data.receiverId === authUser._id)
         ) {
-          // Convert the Firebase data to our app's standard format
           newMsgs.push({
             ...data,
             _id: doc.id,
@@ -72,17 +67,29 @@ const ChatPage = () => {
       });
 
       if (newMsgs.length > 0) {
-        // Add the new messages to the existing list
-        setMessages((prevMessages: MongoMessage[]) => [...prevMessages, ...newMsgs]);
+        // --- THIS IS THE FIX ---
+        // We must check for duplicates before adding.
+        setMessages((prevMessages: MongoMessage[]) => {
+          // Create a Set of existing message IDs for quick lookup
+          const existingIds = new Set(prevMessages.map(msg => msg._id));
+          
+          // Filter out any new messages that are already in our state
+          const uniqueNewMsgs = newMsgs.filter(msg => !existingIds.has(msg._id));
+
+          // If there are any truly new messages, add them
+          if (uniqueNewMsgs.length > 0) {
+            return [...prevMessages, ...uniqueNewMsgs];
+          } else {
+            // Otherwise, return the old state to prevent a re-render
+            return prevMessages;
+          }
+        });
+        // --- END OF FIX ---
       }
     });
 
-    // The cleanup function
     return () => unsubscribe();
     
-  // --- THIS IS THE FIX ---
-  // The dependency array only includes things that define the conversation.
-  // It no longer includes 'messages' or 'messagesLoading'.
   }, [selectedConversation, authUser, setMessages]);
 
   const handleLogout = () => {
@@ -98,19 +105,24 @@ const ChatPage = () => {
     if (newMessage.trim() === '' || !selectedConversation) return;
 
     try {
-      await axios.post(
-        `http://localhost:5000/api/messages/send/${selectedConversation._id}`,
-        { message: newMessage },
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
+      // 1. Use the 'api' instance
+      // 2. Use the relative path
+      // 3. No headers/token needed, the interceptor adds it
+      await api.post(
+        `/messages/send/${selectedConversation._id}`,
+        { message: newMessage }
       );
       
       setNewMessage('');
       // The server saves to Mongo and pushes to Firebase.
       // Our listener will pick it up automatically.
     } catch (error) {
-      console.error("Error sending message: ", error);
+      // 4. Add improved error handling
+      if (isAxiosError(error) && error.response) {
+        console.error("Error sending message:", error.response.data.message);
+      } else {
+        console.error("Error sending message:", (error as Error).message);
+      }
     }
   };
 
