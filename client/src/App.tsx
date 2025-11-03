@@ -8,8 +8,10 @@ import ProtectedRoute from './auth/ProtectedRoute'; // Import ProtectedRoute
 import ForgotPasswordPage from './pages/forgot-password/ForgotPasswordPage';
 import ResetPasswordPage from './pages/reset-password/ResetPasswordPage';
 import VerifyEmailPage from './pages/verify-email/VerifyEmailPage';
+import useOnlineStatus from './hooks/useOnlineStatus';
 
 function App() {
+  useOnlineStatus(); // Initialize the online status hook
   return (
     <Routes>
       {/* Public Routes */}
