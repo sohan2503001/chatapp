@@ -2,6 +2,7 @@ import express from 'express';
 import { protectRoute } from '../middleware/protectRoute.js';
 import Conversation from '../models/conversation.model.js';
 import Message from '../models/message.model.js';
+import { db } from '../firebaseAdmin.js';
 
 const router = express.Router();
 
@@ -61,6 +62,19 @@ router.post('/send/:id', async (req, res) => {
     
     // Save both the conversation and the new message in parallel
     await Promise.all([conversation.save(), newMessage.save()]);
+
+    // ALSO send to Firebase
+    try {
+      // Convert Mongoose doc to a plain object
+      const messageForFirebase = newMessage.toObject();
+      // Add a new timestamp that Firebase understands
+      messageForFirebase.createdAt = new Date(); 
+
+      await db.collection('messages').add(messageForFirebase);
+    } catch (firebaseError) {
+      console.error("Error writing to Firebase:", firebaseError);
+      // Don't block the response, just log the error
+    }
     
     res.status(201).json(newMessage);
   } catch (error) {

@@ -1,68 +1,106 @@
 // client/src/pages/chat/ChatPage.tsx
 import { useState, useEffect, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, addDoc, query, orderBy, onSnapshot, Timestamp } from 'firebase/firestore';
-import { db } from '../../firebase';
+import axios from 'axios';
+import { collection, query, orderBy, onSnapshot, Timestamp, where } from 'firebase/firestore';
+import { db } from '../../firebase'; // Make sure this path is correct
 import useGetUsers from "../../hooks/useGetUsers";
 import useConversation from "../../store/useConversation";
 import useAuthStore from '../../store/useAuthStore';
+import useGetMessages from "../../hooks/useGetMessages";
 
-// Define the structure of a message object
-interface Message {
-  id?: string;
-  text: string;
-  sender: string;
+// Define the MongoDB message type (from our hook)
+interface MongoMessage {
+  _id: string;
+  senderId: string;
+  receiverId: string;
+  message: string;
+  createdAt: string;
+}
+
+// Define the Firebase message type (for the listener)
+interface FirebaseMessage {
+  senderId: string;
+  receiverId: string;
+  message: string;
   createdAt: Timestamp;
 }
 
 const ChatPage = () => {
   const navigate = useNavigate();
-  const { users, loading } = useGetUsers();
+  const { users, loading: usersLoading } = useGetUsers();
   const { selectedConversation, setSelectedConversation } = useConversation();
-  const { setToken, setAuthUser } = useAuthStore();
-  const [messages, setMessages] = useState<Message[]>([]);
+  
+  // --- FIX for setToken/setAuthUser ---
+  // We get the functions from the store here:
+  const { token, authUser, setToken, setAuthUser } = useAuthStore();
+  
+  const { messages, loading: messagesLoading, setMessages } = useGetMessages();
+  
   const [newMessage, setNewMessage] = useState('');
-  const messagesCollectionRef = collection(db, 'messages');
 
-  // Listen for real-time updates from Firestore
+  // Real-time listener
   useEffect(() => {
-    const q = query(messagesCollectionRef, orderBy('createdAt', 'asc'));
+    if (!selectedConversation || !authUser) return;
+
+    const listenerStartTime = new Date();
+
+    const q = query(
+      collection(db, "messages"),
+      orderBy("createdAt", "asc"),
+      where("createdAt", ">", listenerStartTime)
+    );
+
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      const msgs: Message[] = [];
+      const newMsgs: MongoMessage[] = []; // Use our main MongoMessage type
       querySnapshot.forEach((doc) => {
-        msgs.push({ id: doc.id, ...doc.data() } as Message);
+        const data = doc.data() as FirebaseMessage;
+        
+        if (
+          (data.senderId === authUser._id && data.receiverId === selectedConversation._id) ||
+          (data.senderId === selectedConversation._id && data.receiverId === authUser._id)
+        ) {
+          // Convert to our app's message format
+          newMsgs.push({
+            ...data,
+            _id: doc.id,
+            createdAt: data.createdAt.toDate().toISOString(), // Convert Timestamp to string
+          });
+        }
       });
-      setMessages(msgs);
+
+      if (newMsgs.length > 0) {
+        // --- FIX for 'prevMessages' type ---
+        // We provide the type for prevMessages here
+        setMessages((prevMessages: MongoMessage[]) => [...prevMessages, ...newMsgs]);
+      }
     });
 
-    // Clean up the listener when the component unmounts
     return () => unsubscribe();
-  }, []);
+    
+  }, [selectedConversation, authUser, setMessages]);
 
   const handleLogout = () => {
-    // Clear all state on logout
+    // These functions will now be found
     setToken(null);
     setAuthUser(null);
     setSelectedConversation(null);
     navigate('/login');
-    // localStorage.removeItem('token');
   };
 
   const handleSendMessage = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (newMessage.trim() === '') return;
-
-    const messageData = {
-      text: newMessage,
-      sender: 'You',
-      createdAt: Timestamp.now(),
-    };
-
-    // Log the object right before sending
-    console.log("Attempting to send this data:", messageData);
+    if (newMessage.trim() === '' || !selectedConversation) return;
 
     try {
-      await addDoc(messagesCollectionRef, messageData);
+      await axios.post(
+        `http://localhost:5000/api/messages/send/${selectedConversation._id}`,
+        { message: newMessage },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      
       setNewMessage('');
     } catch (error) {
       console.error("Error sending message: ", error);
@@ -75,13 +113,12 @@ const ChatPage = () => {
       <aside className="w-1/4 bg-gray-800 text-white p-4">
         <h2 className="text-xl font-bold mb-4">Users</h2>
         <ul>
-          {loading ? (
+          {usersLoading ? (
             <p>Loading users...</p>
           ) : (
             users.map((user) => (
               <li
                 key={user._id}
-                // 3. Set the selected conversation on click
                 onClick={() => setSelectedConversation(user)}
                 className={`p-2 rounded-md cursor-pointer hover:bg-gray-700 ${
                   selectedConversation?._id === user._id ? "bg-gray-600" : ""
@@ -101,34 +138,44 @@ const ChatPage = () => {
       <main className="flex flex-col flex-1">
         {selectedConversation ? (
           <>
-            {/* Header */}
             <header className="p-4 bg-white border-b border-gray-200">
               <h2 className="text-xl font-bold">{selectedConversation.username}</h2>
             </header>
             
-            {/* Message Display Area */}
             <div className="flex-1 p-6 overflow-y-auto">
-              {messages.map((msg) => (
-                <div key={msg.id} className={`mb-4 ${msg.sender === 'You' ? 'text-right' : ''}`}>
-                  <div className="font-bold">{msg.sender}</div>
-                  <div className={`p-2 rounded-lg inline-block ${msg.sender === 'You' ? 'bg-indigo-500 text-white' : 'bg-gray-300 text-black'}`}>
-                    {msg.text}
+              {messagesLoading && <p className="text-center">Loading messages...</p>}
+              
+              {!messagesLoading && messages.length === 0 && (
+                <p className="text-center text-gray-500">
+                  Send a message to start the conversation!
+                </p>
+              )}
+
+              {!messagesLoading && messages.map((msg) => {
+                const fromMe = msg.senderId === authUser?._id;
+                return (
+                  <div key={msg._id} className={`mb-4 ${fromMe ? 'text-right' : 'text-left'}`}>
+                    <div className={`p-2 rounded-lg inline-block ${fromMe ? 'bg-indigo-500 text-white' : 'bg-gray-300 text-black'}`}>
+                      {msg.message}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
             
-            {/* Message Input Form */}
             <div className="p-4 bg-white border-t border-gray-200">
               <form onSubmit={handleSendMessage} className="flex">
                 <input
                   type="text"
-                  value={newMessage}
-                  onChange={(e) => setNewMessage(e.target.value)}
                   placeholder="Type your message..."
                   className="flex-1 px-4 py-2 border border-gray-300 rounded-l-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  value={newMessage}
+                  onChange={(e) => setNewMessage(e.target.value)}
                 />
-                <button type="submit" className="px-6 py-2 text-white bg-indigo-600 rounded-r-md hover:bg-indigo-700">
+                <button
+                  type="submit"
+                  className="px-6 py-2 text-white bg-indigo-600 rounded-r-md hover:bg-indigo-700 focus:outline-none"
+                >
                   Send
                 </button>
               </form>
