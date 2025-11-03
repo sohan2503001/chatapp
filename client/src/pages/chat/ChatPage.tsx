@@ -9,6 +9,8 @@ import useGetUsers from "../../hooks/useGetUsers";
 import useConversation from "../../store/useConversation";
 import useAuthStore from '../../store/useAuthStore';
 import useGetMessages from "../../hooks/useGetMessages";
+import useListenOnlineStatus from '../../hooks/useListenOnlineStatus'; 
+import useOnlineStore from '../../store/useOnlineStore'; 
 
 // This is the type we get from MongoDB
 interface MongoMessage {
@@ -32,6 +34,8 @@ const ChatPage = () => {
   const { users, loading: usersLoading } = useGetUsers();
   const { selectedConversation, setSelectedConversation } = useConversation();
   const { authUser, setToken, setAuthUser } = useAuthStore();
+  const { onlineUsers } = useOnlineStore(); // To access online users
+  useListenOnlineStatus(); // Start listening to online status changes
   
   // This loads the history from MongoDB
   const { messages, loading: messagesLoading, setMessages } = useGetMessages();
@@ -146,17 +150,30 @@ const ChatPage = () => {
           {usersLoading ? (
             <p>Loading users...</p>
           ) : (
-            users.map((user) => (
-              <li
-                key={user._id}
-                onClick={() => setSelectedConversation(user)}
-                className={`p-2 rounded-md cursor-pointer hover:bg-gray-700 ${
-                  selectedConversation?._id === user._id ? "bg-gray-600" : ""
-                }`}
-              >
-                {user.username}
-              </li>
-            ))
+            users.map((user) => {
+              // 5. Check if this user is in the online list
+              const isOnline = onlineUsers.includes(user._id);
+
+              return (
+                <li
+                  key={user._id}
+                  onClick={() => setSelectedConversation(user)}
+                  className={`p-2 rounded-md cursor-pointer hover:bg-gray-700 ${
+                    selectedConversation?._id === user._id ? "bg-gray-600" : ""
+                  }`}
+                >
+                  <div className="flex items-center space-x-2">
+                    {/* 6. The Green Dot */}
+                    <div
+                      className={`w-3 h-3 rounded-full ${
+                        isOnline ? 'bg-green-500' : 'bg-gray-500'
+                      }`}
+                    ></div>
+                    <span>{user.username}</span>
+                  </div>
+                </li>
+              );
+            })
           )}
         </ul>
         <button onClick={handleLogout} className="w-full mt-6 px-4 py-2 text-white bg-red-600 rounded-md hover:bg-red-7Check">
