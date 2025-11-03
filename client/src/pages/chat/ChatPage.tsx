@@ -92,11 +92,22 @@ const ChatPage = () => {
     
   }, [selectedConversation, authUser, setMessages]);
 
-  const handleLogout = () => {
-    setToken(null);
-    setAuthUser(null);
-    setSelectedConversation(null);
-    navigate('/login');
+  const handleLogout = async () => {
+    try {
+      // 1. Call the backend to clear the httpOnly cookie
+      await api.post('/auth/logout');
+      
+      // 2. Clear all local state
+      setToken(null);
+      setAuthUser(null);
+      setSelectedConversation(null);
+      
+      // 3. Navigate to login (this is now handled by the store,
+      //    but we can keep it for an immediate redirect)
+      navigate('/login');
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
   };
 
   // This sends the message to our Express/Mongo backend

@@ -178,12 +178,21 @@ router.post('/refresh', async (req, res) => {
 });
 
 
-// ## POST /api/auth/logout ##
+// ## POST /api/auth/logout - Clear the refresh token cookie ##
 router.post('/logout', (req, res) => {
-  // In a stateless JWT setup, the primary logout logic is on the client-side.
-  // The client should delete the stored token.
-  // This endpoint is here to provide a formal logout mechanism.
-  res.status(200).json({ message: 'Logged out successfully.' });
+  try {
+    // We clear the cookie by sending a new one with the same name,
+    // an empty value, and an immediate expiration date.
+    res.cookie('refreshToken', '', {
+      httpOnly: true,
+      expires: new Date(0), // Set expiration to a past date
+    });
+    
+    res.status(200).json({ message: 'Logged out successfully.' });
+  } catch (error) {
+    console.error('Error during logout:', error.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 
