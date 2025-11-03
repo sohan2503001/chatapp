@@ -3,13 +3,13 @@ import { useState, useEffect, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { collection, query, orderBy, onSnapshot, Timestamp, where } from 'firebase/firestore';
-import { db } from '../../firebase'; // Make sure this path is correct
+import { db } from '../../firebase';
 import useGetUsers from "../../hooks/useGetUsers";
 import useConversation from "../../store/useConversation";
 import useAuthStore from '../../store/useAuthStore';
 import useGetMessages from "../../hooks/useGetMessages";
 
-// Define the MongoDB message type (from our hook)
+// This is the type we get from MongoDB
 interface MongoMessage {
   _id: string;
   senderId: string;
@@ -18,31 +18,32 @@ interface MongoMessage {
   createdAt: string;
 }
 
-// Define the Firebase message type (for the listener)
+// This is the type we get from Firebase
 interface FirebaseMessage {
   senderId: string;
   receiverId: string;
   message: string;
-  createdAt: Timestamp;
+  createdAt: Timestamp; // Firebase uses a specific Timestamp object
 }
 
 const ChatPage = () => {
   const navigate = useNavigate();
   const { users, loading: usersLoading } = useGetUsers();
   const { selectedConversation, setSelectedConversation } = useConversation();
-  
-  // --- FIX for setToken/setAuthUser ---
-  // We get the functions from the store here:
   const { token, authUser, setToken, setAuthUser } = useAuthStore();
   
+  // This loads the history from MongoDB
   const { messages, loading: messagesLoading, setMessages } = useGetMessages();
   
   const [newMessage, setNewMessage] = useState('');
 
-  // Real-time listener
+  // This hook listens for NEW real-time messages
   useEffect(() => {
+    // Don't listen until a chat is selected
     if (!selectedConversation || !authUser) return;
 
+    // We record the time the component mounts.
+    // We'll only listen for messages created AFTER this time.
     const listenerStartTime = new Date();
 
     const q = query(
@@ -52,42 +53,46 @@ const ChatPage = () => {
     );
 
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      const newMsgs: MongoMessage[] = []; // Use our main MongoMessage type
+      const newMsgs: MongoMessage[] = [];
       querySnapshot.forEach((doc) => {
         const data = doc.data() as FirebaseMessage;
         
+        // Filter messages to make sure they belong to the open conversation
         if (
           (data.senderId === authUser._id && data.receiverId === selectedConversation._id) ||
           (data.senderId === selectedConversation._id && data.receiverId === authUser._id)
         ) {
-          // Convert to our app's message format
+          // Convert the Firebase data to our app's standard format
           newMsgs.push({
             ...data,
             _id: doc.id,
-            createdAt: data.createdAt.toDate().toISOString(), // Convert Timestamp to string
+            createdAt: data.createdAt.toDate().toISOString(),
           });
         }
       });
 
       if (newMsgs.length > 0) {
-        // --- FIX for 'prevMessages' type ---
-        // We provide the type for prevMessages here
+        // Add the new messages to the existing list
         setMessages((prevMessages: MongoMessage[]) => [...prevMessages, ...newMsgs]);
       }
     });
 
+    // The cleanup function
     return () => unsubscribe();
     
+  // --- THIS IS THE FIX ---
+  // The dependency array only includes things that define the conversation.
+  // It no longer includes 'messages' or 'messagesLoading'.
   }, [selectedConversation, authUser, setMessages]);
 
   const handleLogout = () => {
-    // These functions will now be found
     setToken(null);
     setAuthUser(null);
     setSelectedConversation(null);
     navigate('/login');
   };
 
+  // This sends the message to our Express/Mongo backend
   const handleSendMessage = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (newMessage.trim() === '' || !selectedConversation) return;
@@ -102,6 +107,8 @@ const ChatPage = () => {
       );
       
       setNewMessage('');
+      // The server saves to Mongo and pushes to Firebase.
+      // Our listener will pick it up automatically.
     } catch (error) {
       console.error("Error sending message: ", error);
     }
@@ -129,7 +136,7 @@ const ChatPage = () => {
             ))
           )}
         </ul>
-        <button onClick={handleLogout} className="w-full mt-6 px-4 py-2 text-white bg-red-600 rounded-md hover:bg-red-700">
+        <button onClick={handleLogout} className="w-full mt-6 px-4 py-2 text-white bg-red-600 rounded-md hover:bg-red-7Check">
           Logout
         </button>
       </aside>

@@ -63,18 +63,25 @@ router.post('/send/:id', async (req, res) => {
     // Save both the conversation and the new message in parallel
     await Promise.all([conversation.save(), newMessage.save()]);
 
-    // ALSO send to Firebase
+    // ALSO send to Firebase Firestore for real-time updates
     try {
-      // Convert Mongoose doc to a plain object
-      const messageForFirebase = newMessage.toObject();
-      // Add a new timestamp that Firebase understands
-      messageForFirebase.createdAt = new Date(); 
+          // --- THIS IS THE FIX ---  
+          // Create a new, clean object for Firebase.
+          // Convert all ObjectIds to simple strings using .toString()
+          const messageForFirebase = {
+            message: newMessage.message,
+            senderId: newMessage.senderId.toString(),
+            receiverId: newMessage.receiverId.toString(),
+            createdAt: new Date(), // Use a native JavaScript Date
+          };
+          
+          // Send the clean, plain object to Firestore
+          await db.collection('messages').add(messageForFirebase);
 
-      await db.collection('messages').add(messageForFirebase);
-    } catch (firebaseError) {
-      console.error("Error writing to Firebase:", firebaseError);
-      // Don't block the response, just log the error
-    }
+        } catch (firebaseError) {
+          console.error("Error writing to Firebase:", firebaseError);
+          // Don't block the response, just log the error
+        }
     
     res.status(201).json(newMessage);
   } catch (error) {
