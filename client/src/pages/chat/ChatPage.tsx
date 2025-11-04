@@ -3,7 +3,7 @@ import { useState, useEffect, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api/api';
 import { isAxiosError } from 'axios';
-import { collection, query, orderBy, onSnapshot, Timestamp, where } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, Timestamp, where, doc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import useGetUsers from "../../hooks/useGetUsers";
 import useConversation from "../../store/useConversation";
@@ -11,6 +11,10 @@ import useAuthStore from '../../store/useAuthStore';
 import useGetMessages from "../../hooks/useGetMessages";
 import useListenOnlineStatus from '../../hooks/useListenOnlineStatus'; 
 import useOnlineStore from '../../store/useOnlineStore'; 
+import useCallListener from '../../hooks/useCallListener';
+import useCallStore from '../../store/useCallStore'; // Import the call store
+import IncomingCallModal from '../../components/modals/IncomingCallModal'; // Import the modal
+import VideoCall from '../../components/video/VideoCall'; // For video call UI
 
 // This is the type we get from MongoDB
 interface MongoMessage {
@@ -36,10 +40,11 @@ const ChatPage = () => {
   const { authUser, setToken, setAuthUser } = useAuthStore();
   const { onlineUsers } = useOnlineStore(); // To access online users
   useListenOnlineStatus(); // Start listening to online status changes
+  useCallListener(); // Start listening for incoming calls
+  const { isReceivingCall, callInProgress, setCallInProgress, setRoomName } = useCallStore(); // Get the state to check if receiving a call
   
   // This loads the history from MongoDB
   const { messages, loading: messagesLoading, setMessages } = useGetMessages();
-  
   const [newMessage, setNewMessage] = useState('');
 
   // This hook listens for NEW real-time messages
@@ -96,10 +101,44 @@ const ChatPage = () => {
     
   }, [selectedConversation, authUser, setMessages]);
 
-  const handleVideoCall = () => {
-    // We'll add the Firebase call logic here in the next step
-    if (selectedConversation) {
-      console.log(`Starting video call with ${selectedConversation.username}...`);
+  const handleVideoCall = async () => {
+    if (!selectedConversation || !authUser) return;
+
+    try {
+      const roomName = Math.random().toString(36).substring(2, 15);
+      const callDocRef = doc(db, 'calls', selectedConversation._id);
+      
+      // Set the initial call document
+      await setDoc(callDocRef, {
+        callerId: authUser._id,
+        callerName: authUser.username,
+        receiverId: selectedConversation._id,
+        status: 'ringing',
+        createdAt: Timestamp.now(),
+        roomName: roomName,
+      });
+      
+      // --- 2. This is the new logic for the caller ---
+      // Listen for changes to the call document
+      const unsubscribe = onSnapshot(callDocRef, (docSnapshot) => {
+        if (docSnapshot.exists()) {
+          const callData = docSnapshot.data();
+          
+          if (callData.status === 'accepted') {
+            // Call was accepted! Join the room.
+            setRoomName(callData.roomName); // Room name is the doc ID
+            setCallInProgress(true);
+            unsubscribe(); // Stop listening
+          }
+        } else {
+          // Document was deleted (call was declined)
+          alert(`${selectedConversation.username} declined the call.`);
+          unsubscribe(); // Stop listening
+        }
+      });
+      
+    } catch (error) {
+      console.error("Error starting call:", error);
     }
   };
 
@@ -149,7 +188,13 @@ const ChatPage = () => {
   };
 
   return (
-    <div className="flex h-screen bg-gray-100">
+    <div className="flex h-screen bg-gray-100 relative">
+      {/* Render the modal if a call is ringing */}
+      {isReceivingCall && <IncomingCallModal />}
+
+      {/* Show the Jitsi meeting if a call is in progress */}
+      {callInProgress && <VideoCall />}
+
       {/* Sidebar */}
       <aside className="w-1/4 bg-gray-800 text-white p-4">
         <h2 className="text-xl font-bold mb-4">Users</h2>
