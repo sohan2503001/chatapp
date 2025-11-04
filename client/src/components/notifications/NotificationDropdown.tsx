@@ -1,10 +1,40 @@
 // import React from 'react';
+import { useEffect, useRef } from 'react';
 import useNotificationStore, { type Notification } from '../../store/useNotificationStore';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 
 const NotificationDropdown = () => {
-  const { isOpen, notifications} = useNotificationStore();
+  // --- THIS IS THE FIX ---
+  // You need to get 'close' from the store
+  const { isOpen, notifications, close } = useNotificationStore();
+  // --- END OF FIX ---
+  
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return; // Only run if the dropdown is open
+
+    const handleClickOutside = (event: MouseEvent) => {
+      // Check if the click was on the bell button
+      const isBellClick = (event.target as HTMLElement).closest('button[aria-label="Toggle Notifications"]');
+      
+      // Check if the click was inside the dropdown
+      const isInsideDropdown = dropdownRef.current && dropdownRef.current.contains(event.target as Node);
+
+      // If the click was *not* on the bell and *not* inside the dropdown, close it.
+      if (!isBellClick && !isInsideDropdown) {
+        close();
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    
+    // Cleanup function to remove the listener
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen, close]);
 
   const handleMarkAsRead = async (notificationId: string) => {
     // Mark the notification as read in Firebase
@@ -32,7 +62,7 @@ const NotificationDropdown = () => {
   if (!isOpen) return null;
 
   return (
-    <div className="absolute top-14 right-4 w-80 bg-white rounded-lg shadow-xl border border-gray-200 z-50">
+    <div ref={dropdownRef} className="absolute top-14 right-4 w-80 bg-white rounded-lg shadow-xl border border-gray-200 z-50">
       <div className="p-4 border-b flex justify-between items-center">
         <h3 className="text-lg font-semibold text-gray-800">Notifications</h3>
         {/* We can add a "Mark All Read" button here later */}

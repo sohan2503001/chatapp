@@ -12,6 +12,7 @@ export interface Notification {
 interface NotificationStore {
   isOpen: boolean;
   toggle: () => void;
+  close: () => void;
   notifications: Notification[];
   setNotifications: (notifications: Notification[]) => void;
 }
@@ -19,6 +20,7 @@ interface NotificationStore {
 const useNotificationStore = create<NotificationStore>((set) => ({
   isOpen: false,
   toggle: () => set((state) => ({ isOpen: !state.isOpen })),
+  close: () => set({ isOpen: false }),
   notifications: [],
   setNotifications: (notifications) => set({ notifications }),
 }));
