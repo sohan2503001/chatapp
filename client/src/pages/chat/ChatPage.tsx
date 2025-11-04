@@ -17,6 +17,7 @@ import IncomingCallModal from '../../components/modals/IncomingCallModal'; // Im
 import VideoCall from '../../components/video/VideoCall'; // For video call UI
 import NotificationBell from '../../components/notifications/NotificationBell'; //Import the NotificationBell component
 import NotificationDropdown from '../../components/notifications/NotificationDropdown'; // Import the NotificationDropdown component
+import useNotificationListener from '../../hooks/useNotificationListener'; // Import the hook to listen for notifications
 
 // This is the type we get from MongoDB
 interface MongoMessage {
@@ -43,6 +44,7 @@ const ChatPage = () => {
   const { onlineUsers } = useOnlineStore(); // To access online users
   useListenOnlineStatus(); // Start listening to online status changes
   useCallListener(); // Start listening for incoming calls
+  useNotificationListener(); // Start listening for notifications
   const { isReceivingCall, callInProgress, setCallInProgress, setRoomName } = useCallStore(); // Get the state to check if receiving a call
   
   // This loads the history from MongoDB

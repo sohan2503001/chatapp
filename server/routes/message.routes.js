@@ -65,7 +65,6 @@ router.post('/send/:id', async (req, res) => {
 
     // ALSO send to Firebase Firestore for real-time updates
     try {
-          // --- THIS IS THE FIX ---  
           // Create a new, clean object for Firebase.
           // Convert all ObjectIds to simple strings using .toString()
           const messageForFirebase = {
@@ -81,6 +80,22 @@ router.post('/send/:id', async (req, res) => {
         } catch (firebaseError) {
           console.error("Error writing to Firebase:", firebaseError);
           // Don't block the response, just log the error
+        }
+      
+      // Create a notification for the receiver
+    try {
+          const notificationData = {
+            receiverId: newMessage.receiverId.toString(),
+            senderId: newMessage.senderId.toString(),
+            senderName: req.user.username, // We have this from the protectRoute middleware
+            type: 'NEW_MESSAGE',
+            isRead: false,
+            createdAt: new Date(),
+          };
+          // We'll create a new document in a 'notifications' collection
+          await db.collection('notifications').add(notificationData);
+        } catch (notificationError) {
+          console.error("Error writing to Firebase 'notifications':", notificationError);
         }
     
     res.status(201).json(newMessage);
