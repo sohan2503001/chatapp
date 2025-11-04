@@ -96,6 +96,13 @@ const ChatPage = () => {
     
   }, [selectedConversation, authUser, setMessages]);
 
+  const handleVideoCall = () => {
+    // We'll add the Firebase call logic here in the next step
+    if (selectedConversation) {
+      console.log(`Starting video call with ${selectedConversation.username}...`);
+    }
+  };
+
   const handleLogout = async () => {
     try {
       // 1. Call the backend to clear the httpOnly cookie
@@ -151,7 +158,8 @@ const ChatPage = () => {
             <p>Loading users...</p>
           ) : (
             users.map((user) => {
-              // 5. Check if this user is in the online list
+              // --- THIS IS THE NEW LOGIC ---
+              // Check if this user is in the online list
               const isOnline = onlineUsers.includes(user._id);
 
               return (
@@ -162,17 +170,18 @@ const ChatPage = () => {
                     selectedConversation?._id === user._id ? "bg-gray-600" : ""
                   }`}
                 >
+                  {/* This div adds the dot and name */}
                   <div className="flex items-center space-x-2">
-                    {/* 6. The Green Dot */}
                     <div
                       className={`w-3 h-3 rounded-full ${
-                        isOnline ? 'bg-green-500' : 'bg-gray-500'
+                        isOnline ? 'bg-green-500' : 'bg-gray-500' // Green or gray dot
                       }`}
                     ></div>
                     <span>{user.username}</span>
                   </div>
                 </li>
               );
+              // --- END OF NEW LOGIC ---
             })
           )}
         </ul>
@@ -185,8 +194,25 @@ const ChatPage = () => {
       <main className="flex flex-col flex-1">
         {selectedConversation ? (
           <>
-            <header className="p-4 bg-white border-b border-gray-200">
+            {/* --- THIS IS THE UPDATED HEADER --- */}
+            <header className="p-4 bg-white border-b border-gray-200 flex justify-between items-center">
               <h2 className="text-xl font-bold">{selectedConversation.username}</h2>
+              <button
+                onClick={handleVideoCall}
+                className="p-2 rounded-full hover:bg-gray-200"
+                title="Start video call"
+              >
+                {/* A simple video camera icon using SVG */}
+                <svg 
+                  xmlns="http://www.w3.org/2000/svg" 
+                  viewBox="0 0 24 24" 
+                  fill="currentColor" 
+                  className="w-6 h-6 text-gray-700"
+                >
+                  <path d="M4.5 4.5a3 3 0 0 0-3 3v9a3 3 0 0 0 3 3h12a3 3 0 0 0 3-3v-9a3 3 0 0 0-3-3h-12Z" />
+                  <path d="M18 7.5a.75.75 0 0 0-1.5 0v3a.75.75 0 0 0 1.5 0v-3ZM21.75 9a.75.75 0 0 0-.75-.75h-1.5a.75.75 0 0 0 0 1.5h1.5a.75.75 0 0 0 .75-.75Z" />
+                </svg>
+              </button>
             </header>
             
             <div className="flex-1 p-6 overflow-y-auto">
