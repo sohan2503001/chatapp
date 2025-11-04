@@ -15,6 +15,8 @@ import useCallListener from '../../hooks/useCallListener';
 import useCallStore from '../../store/useCallStore'; // Import the call store
 import IncomingCallModal from '../../components/modals/IncomingCallModal'; // Import the modal
 import VideoCall from '../../components/video/VideoCall'; // For video call UI
+import NotificationBell from '../../components/notifications/NotificationBell'; //Import the NotificationBell component
+import NotificationDropdown from '../../components/notifications/NotificationDropdown'; // Import the NotificationDropdown component
 
 // This is the type we get from MongoDB
 interface MongoMessage {
@@ -196,17 +198,29 @@ const ChatPage = () => {
       {callInProgress && <VideoCall />}
 
       {/* Sidebar */}
-      <aside className="w-1/4 bg-gray-800 text-white p-4">
-        <h2 className="text-xl font-bold mb-4">Users</h2>
-        <ul>
+      {/* 2. Add 'flex flex-col' to the aside */}
+      <aside className={`w-1/4 bg-gray-800 text-white p-4 flex flex-col ${callInProgress ? 'blur-sm' : ''}`}>
+        
+        {/* 3. Create a header for the sidebar */}
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-bold">Users</h2>
+          <div className="relative">
+            <NotificationBell />
+            <NotificationDropdown />
+          </div>
+        </div>
+
+        {/* 4. Make the user list scrollable */}
+        <ul className="flex-1 overflow-y-auto">
           {usersLoading ? (
             <p>Loading users...</p>
           ) : (
             users.map((user) => {
-              // --- THIS IS THE NEW LOGIC ---
               // Check if this user is in the online list
               const isOnline = onlineUsers.includes(user._id);
 
+              // --- THIS IS THE FIX ---
+              // We must explicitly 'return' the JSX
               return (
                 <li
                   key={user._id}
@@ -215,22 +229,23 @@ const ChatPage = () => {
                     selectedConversation?._id === user._id ? "bg-gray-600" : ""
                   }`}
                 >
-                  {/* This div adds the dot and name */}
                   <div className="flex items-center space-x-2">
                     <div
                       className={`w-3 h-3 rounded-full ${
-                        isOnline ? 'bg-green-500' : 'bg-gray-500' // Green or gray dot
+                        isOnline ? 'bg-green-500' : 'bg-gray-500'
                       }`}
                     ></div>
                     <span>{user.username}</span>
                   </div>
                 </li>
               );
-              // --- END OF NEW LOGIC ---
+              // --- END OF FIX ---
             })
           )}
         </ul>
-        <button onClick={handleLogout} className="w-full mt-6 px-4 py-2 text-white bg-red-600 rounded-md hover:bg-red-7Check">
+
+        {/* 5. The logout button is pushed to the bottom */}
+        <button onClick={handleLogout} className="w-full mt-6 px-4 py-2 text-white bg-red-600 rounded-md hover:bg-red-700">
           Logout
         </button>
       </aside>
