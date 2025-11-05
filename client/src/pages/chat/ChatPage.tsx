@@ -19,6 +19,7 @@ import VideoCall from '../../components/video/VideoCall'; // For video call UI
 import NotificationBell from '../../components/notifications/NotificationBell'; //Import the NotificationBell component
 import NotificationDropdown from '../../components/notifications/NotificationDropdown'; // Import the NotificationDropdown component
 import useNotificationListener from '../../hooks/useNotificationListener'; // Import the hook to listen for notifications
+import MediaViewerModal from '../../components/modals/MediaViewerModal';
 
 // This is the type we get from Firebase
 interface FirebaseMessage {
@@ -48,6 +49,7 @@ const ChatPage = () => {
   const [isSending, setIsSending] = useState(false); // Add sending state for messages
   const [isUploading, setIsUploading] = useState(false); // Add uploading state for file uploads
   const fileInputRef = useRef<HTMLInputElement>(null); // Add ref for file input element
+  const [viewingMedia, setViewingMedia] = useState<{ url: string, type: string } | null>(null); // State for media viewer
 
   // This hook listens for NEW real-time messages
   useEffect(() => {
@@ -237,6 +239,15 @@ const ChatPage = () => {
 
   return (
     <div className="flex h-screen bg-gray-100 relative">
+      {/* Render the media viewer modal if viewingMedia is set */}
+      {viewingMedia && (
+        <MediaViewerModal
+          mediaType={viewingMedia.type}
+          url={viewingMedia.url}
+          onClose={() => setViewingMedia(null)}
+        />
+      )}
+
       {/* Render the modal if a call is ringing */}
       {isReceivingCall && <IncomingCallModal />}
 
@@ -244,7 +255,7 @@ const ChatPage = () => {
       {callInProgress && <VideoCall />}
 
       {/* Sidebar */}
-      <aside className={`w-1/4 bg-gray-800 text-white p-4 flex flex-col ${callInProgress ? 'blur-sm' : ''}`}>
+      <aside className={`w-1/4 bg-gray-800 text-white p-4 flex flex-col ${callInProgress || viewingMedia  ? 'blur-sm' : ''}`}>
         
         {/* Create a header for the sidebar */}
         <div className="flex justify-between items-center mb-4">
@@ -294,7 +305,7 @@ const ChatPage = () => {
       </aside>
 
       {/* Main Chat Area */}
-      <main className="flex flex-col flex-1">
+      <main className={`flex flex-col flex-1 ${callInProgress || viewingMedia ? 'blur-sm' : ''}`}>
         {selectedConversation ? (
           <>
             {/* --- HEADER with video call button--- */}
@@ -327,7 +338,7 @@ const ChatPage = () => {
                 </p>
               )}
 
-              {/* --- UPDATE: New Message Rendering Logic --- */}
+              {/* --- New Message Rendering Logic --- */}
               {!messagesLoading && messages.map((msg) => {
                 const fromMe = msg.senderId === authUser?._id;
 
@@ -336,23 +347,33 @@ const ChatPage = () => {
                   switch (msg.messageType) {
                     case 'image':
                       return (
-                        <a href={msg.url} target="_blank" rel="noopener noreferrer">
-                          <img 
-                            src={msg.thumbnailUrl || msg.url} // Show thumbnail in chat
-                            alt="Uploaded content" 
-                            className="max-w-[250px] rounded-lg cursor-pointer"
-                          />
-                        </a>
+                        // Add onClick to set the modal state
+                        <img 
+                          src={msg.thumbnailUrl || msg.url}
+                          alt="Uploaded content" 
+                          className="max-w-[250px] rounded-lg cursor-pointer hover:opacity-80"
+                          onClick={() => setViewingMedia({ url: msg.url, type: 'image' })}
+                        />
                       );
                     case 'video':
                       return (
-                        <video 
-                          controls 
-                          src={msg.url} 
-                          className="max-w-[250px] rounded-lg"
+                        // Add an overlay/icon and onClick to open the modal
+                        <div 
+                          className="relative max-w-[250px] cursor-pointer"
+                          onClick={() => setViewingMedia({ url: msg.url, type: 'video' })}
                         >
-                          Your browser does not support the video tag.
-                        </video>
+                          <video 
+                            src={msg.url + '#t=0.1'} // Show first frame
+                            className="rounded-lg"
+                            preload="metadata"
+                          />
+                          {/* Play button overlay */}
+                          <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 rounded-lg">
+                            <svg className="w-12 h-12 text-white" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
+                            </svg>
+                          </div>
+                        </div>
                       );
                     case 'audio':
                       return (
@@ -362,7 +383,7 @@ const ChatPage = () => {
                       );
                     case 'text':
                     default:
-                      return msg.content || (msg as any).message; // Use content, not message
+                      return msg.content || (msg as any).message;
                   }
                 };
 
