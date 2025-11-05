@@ -3,7 +3,7 @@ import { useState, useEffect, type FormEvent, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api/api';
 import { isAxiosError } from 'axios';
-import { collection, query, orderBy, onSnapshot, Timestamp, where, doc, setDoc } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, Timestamp, where, doc, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import useGetUsers from "../../hooks/useGetUsers";
 import useConversation from "../../store/useConversation";
@@ -20,6 +20,8 @@ import NotificationBell from '../../components/notifications/NotificationBell'; 
 import NotificationDropdown from '../../components/notifications/NotificationDropdown'; // Import the NotificationDropdown component
 import useNotificationListener from '../../hooks/useNotificationListener'; // Import the hook to listen for notifications
 import MediaViewerModal from '../../components/modals/MediaViewerModal';
+import useTypingStore from '../../store/useTypingStore';       // Import typing store
+import useTypingListener from '../../hooks/useTypingListener'; // Import typing listener
 
 // This is the type we get from Firebase
 interface FirebaseMessage {
@@ -30,6 +32,8 @@ interface FirebaseMessage {
   url: string;
   thumbnailUrl: string;
   createdAt: Timestamp; // Firebase uses a specific Timestamp object
+  firebaseDocId?: string;
+  isSeen?: boolean;
 }
 
 const ChatPage = () => {
@@ -41,8 +45,10 @@ const ChatPage = () => {
   useListenOnlineStatus(); // Start listening to online status changes
   useCallListener(); // Start listening for incoming calls
   useNotificationListener(); // Start listening for notifications
+  useTypingListener(); // Start listening for typing indicators
   const { isReceivingCall, callInProgress, setCallInProgress, setCallDetails} = useCallStore(); // Get the state to check if receiving a call
-  
+  const { isOpponentTyping } = useTypingStore(); // Get typing state
+
   // This loads the history from MongoDB
   const { messages, loading: messagesLoading, setMessages } = useGetMessages();
   const [newMessage, setNewMessage] = useState('');
@@ -50,7 +56,48 @@ const ChatPage = () => {
   const [isUploading, setIsUploading] = useState(false); // Add uploading state for file uploads
   const fileInputRef = useRef<HTMLInputElement>(null); // Add ref for file input element
   const [viewingMedia, setViewingMedia] = useState<{ url: string, type: string } | null>(null); // State for media viewer
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null); // Ref for typing timeout
 
+  // Function to update typing status in Firestore
+  const updateTypingStatus = async (isTyping: boolean) => {
+    if (!selectedConversation || !authUser) return;
+    const typingDocRef = doc(db, 'typingStatus', selectedConversation._id);
+    if (isTyping) {
+      try {
+        await setDoc(typingDocRef, { senderId: authUser._id });
+      } catch (error) { console.error("Error setting typing status:", error); }
+    } else {
+      try {
+        await deleteDoc(typingDocRef);
+      } catch (error) { console.error("Error deleting typing status:", error); }
+    }
+  };
+
+  // --- START: SEEN INDICATOR CODE ---
+  // Function to mark a message as seen
+  const markMessageAsSeen = async (message: Message) => {
+    if (!message.firebaseDocId || message.isSeen) return;
+    try {
+      const messageDocRef = doc(db, "messages", message.firebaseDocId);
+      await updateDoc(messageDocRef, { isSeen: true });
+    } catch (error) {
+      console.error("Error marking message as seen:", error);
+    }
+  };
+  // --- END: SEEN INDICATOR CODE ---
+
+  // Handle input change for typing indicator
+  const handleTypingChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setNewMessage(e.target.value);
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+    updateTypingStatus(true);
+    typingTimeoutRef.current = setTimeout(() => {
+      updateTypingStatus(false);
+    }, 2000);
+  };
+  
   // This hook listens for NEW real-time messages
   useEffect(() => {
     if (!selectedConversation || !authUser) return;
@@ -63,22 +110,45 @@ const ChatPage = () => {
     );
 
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      // --- UPDATE: Change type to FirebaseMessage ---
       const newMsgs: Message[] = [];
-      querySnapshot.forEach((doc) => {
-        const data = doc.data() as FirebaseMessage;
+      const updatedMsgs: Message[] = [];
+
+      querySnapshot.docChanges().forEach((change) => {
+        const data = change.doc.data() as FirebaseMessage;
+
+        const msg: Message = {
+          // Manually construct the Message type
+          _id: change.doc.id,
+          firebaseDocId: change.doc.id,
+          senderId: data.senderId,
+          receiverId: data.receiverId,
+          messageType: data.messageType,
+          content: data.content,
+          url: data.url,
+          thumbnailUrl: data.thumbnailUrl,
+          isSeen: data.isSeen || false,
+          createdAt: data.createdAt.toDate().toISOString(),
+        };
+
+        // Check if message is part of the current conversation
+        const isCurrentConversation = (msg.senderId === authUser._id && msg.receiverId === selectedConversation._id) ||
+                                      (msg.senderId === selectedConversation._id && msg.receiverId === authUser._id);
         
-        if (
-          (data.senderId === authUser._id && data.receiverId === selectedConversation._id) ||
-          (data.senderId === selectedConversation._id && data.receiverId === authUser._id)
-        ) {
-          // --- UPDATE: Spread operator now correctly includes all new fields ---
-          newMsgs.push({
-            ...data,
-            _id: doc.id,
-            createdAt: data.createdAt.toDate().toISOString(),
-          });
+        if (!isCurrentConversation) return; // Ignore messages not for this chat
+
+        // --- THIS IS THE NEW LOGIC ---
+        if (change.type === "added") {
+          newMsgs.push(msg);
+          // If this new message is from the other person, mark it as seen
+          if (msg.senderId === selectedConversation._id) {
+            markMessageAsSeen(msg);
+          }
         }
+        
+        if (change.type === "modified") {
+          updatedMsgs.push(msg);
+        }
+        // --- END OF NEW LOGIC ---
       });
 
       if (newMsgs.length > 0) {
@@ -100,6 +170,17 @@ const ChatPage = () => {
         });
         // --- END OF FIX ---
       }
+      
+      // Handle updated messages
+      if (updatedMsgs.length > 0) {
+        setMessages((prevMessages) => {
+          const updates = new Map(updatedMsgs.map(m => [m._id, m]));
+          return prevMessages.map(msg => 
+            updates.has(msg._id) ? updates.get(msg._id)! : msg
+          );
+        });
+      }
+
     });
 
     return () => unsubscribe();
@@ -240,11 +321,17 @@ const ChatPage = () => {
     }
   };
 
-  // --- UPDATE: This function is now correct ---
+  // --- UPDATE: This function now uses isSending state ---
   const handleSendMessage = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     // Also check if we are uploading
     if (newMessage.trim() === '' || !selectedConversation || isUploading || isSending) return;
+
+    // Stop and clear any typing timeout
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+    updateTypingStatus(false); // Stop typing immediately
 
     setIsSending(true); // Use the isSending state
     try {
@@ -437,9 +524,37 @@ const ChatPage = () => {
                         {/* Render the correct content */}
                       {renderMessageContent()}
                     </div>
+
+                    {/* --- ADD THIS BLOCK: For Seen Indicator --- */}
+                    {fromMe && (
+                      <div className="flex items-end pl-1 pb-1">
+                        {msg.isSeen ? (
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-blue-400">
+                            <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.052-.143Z" clipRule="evenodd" />
+                            <path fillRule="evenodd" d="M8.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-1.5-1.5a.75.75 0 0 1 1.06-1.06L.75 13.893l7.48-9.817a.75.75 0 0 1 1.052-.143Z" clipRule="evenodd" />
+                          </svg>
+                        ) : (
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-gray-400">
+                            <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.052-.143Z" clipRule="evenodd" />
+                          </svg>
+                        )}
+                      </div>
+                    )}
+
                   </div>
                 );
+
               })}
+
+              {/* --- (Typing indicator is correct) ---*/}
+              {isOpponentTyping && (
+              <div className="mb-4 text-left">
+                <div className="p-2 rounded-lg inline-block bg-gray-300 text-black">
+                  <span className="italic">is typing...</span>
+                </div>
+              </div>
+            )}
+
             </div>
             
             {/* --- UPDATE: Input Form now uses isSending --- */}
@@ -475,7 +590,7 @@ const ChatPage = () => {
                   placeholder="Type your message..."
                   className="flex-1 px-4 py-2 border border-gray-300 rounded-l-md focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100"
                   value={newMessage}
-                  onChange={(e) => setNewMessage(e.target.value)}
+                  onChange={handleTypingChange}
                   disabled={isUploading || isSending} // Disable if uploading or sending
                 />
                 <button

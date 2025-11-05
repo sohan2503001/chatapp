@@ -14,8 +14,6 @@ const messageSchema = new mongoose.Schema(
       required: true,
     },
     
-    // --- WE ARE REPLACING THE OLD 'message' FIELD WITH THESE ---
-    
     messageType: {
       type: String,
       enum: ["text", "image", "video", "audio"],
@@ -34,8 +32,15 @@ const messageSchema = new mongoose.Schema(
       type: String, // For image/video thumbnails
       default: "",
     },
+    isSeen: {
+      type: Boolean,
+      default: false,
+    },
+    firebaseDocId: {
+      type: String,
+      default: "",
+    },
     
-    // --- The old 'message: { type: String, required: true }' field should be DELETED ---
   },
   { timestamps: true }
 );

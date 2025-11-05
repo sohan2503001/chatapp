@@ -8,4 +8,6 @@ export interface Message {
   url: string; // For media
   thumbnailUrl: string; // For media thumbnails
   createdAt: string;
+  firebaseDocId: string;
+  isSeen: boolean;
 }

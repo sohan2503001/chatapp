@@ -67,6 +67,7 @@ router.post('/send/:id', async (req, res) => {
       content: content || '',
       url: url || '',
       thumbnailUrl: thumbnailUrl || '',
+      isSeen: false,
     });
 
     // If the message was created, add its ID to the conversation
@@ -89,15 +90,18 @@ router.post('/send/:id', async (req, res) => {
             url: newMessage.url,
             thumbnailUrl: newMessage.thumbnailUrl,
             createdAt: new Date(), // Use a native JavaScript Date
+            isSeen: false,
         };
-          
-          // Send the clean, plain object to Firestore
-          await db.collection('messages').add(messageForFirebase);
+
+        const newFirebaseDoc = await db.collection('messages').add(messageForFirebase); // Add to 'messages' collection in Firestore
+
+        newMessage.firebaseDocId = newFirebaseDoc.id; // Store the Firestore document ID in MongoDB
 
         } catch (firebaseError) {
           console.error("Error writing to Firebase:", firebaseError);
-          // Don't block the response, just log the error
         }
+
+        await Promise.all([conversation.save(), newMessage.save()]);
       
       // Create a notification for the receiver
     try {
