@@ -4,14 +4,7 @@ import useConversation from "../store/useConversation";
 import useAuthStore from "../store/useAuthStore";
 import { isAxiosError } from 'axios';
 import api from '../api/api';
-
-interface Message {
-  _id: string;
-  senderId: string;
-  receiverId: string;
-  message: string;
-  createdAt: string;
-}
+import type { Message } from "../types/Message";
 
 const useGetMessages = () => {
   const [loading, setLoading] = useState(false);
@@ -25,13 +18,14 @@ const useGetMessages = () => {
     setMessages([]); 
     if (!selectedConversation) return;
     setLoading(true);
+
     try {
-      // 2. Use the 'api' instance (no headers needed)
+      //  Use the 'api' instance (no headers needed)
       const res = await api.get(`/messages/${selectedConversation._id}`);
       
       setMessages(res.data);
     } catch (error) {
-      // 3. Use isAxiosError for better error handling
+      //  Use isAxiosError for better error handling
       if (isAxiosError(error) && error.response) {
         console.error("Error fetching messages:", error.response.data.message);
       } else {

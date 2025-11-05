@@ -1,5 +1,5 @@
 import express from 'express';
-import { protectRoute } from '../middleware/protectRoute.js';
+// import { protectRoute } from '../middleware/protectRoute.js';
 import Conversation from '../models/conversation.model.js';
 import Message from '../models/message.model.js';
 import { db } from '../firebaseAdmin.js';
@@ -32,9 +32,20 @@ router.get('/:id', async (req, res) => {
 // ## POST /api/messages/send/:id - Send a new message ##
 router.post('/send/:id', async (req, res) => {
   try {
-    const { message } = req.body;
+    const { messageType, content, url, thumbnailUrl } = req.body;
     const { id: receiverId } = req.params;
     const senderId = req.user._id; // We get this from the protectRoute middleware
+
+    // Validate messageType and required fields
+    if (!messageType) {
+       return res.status(400).json({ error: "messageType is required" });
+    }
+    if (messageType === 'text' && !content) {
+      return res.status(400).json({ error: "Text content is required" });
+    }
+    if (messageType !== 'text' && !url) {
+      return res.status(400).json({ error: "File URL is required" });
+    }
 
     // Find the conversation between these two users
     let conversation = await Conversation.findOne({
@@ -52,7 +63,10 @@ router.post('/send/:id', async (req, res) => {
     const newMessage = new Message({
       senderId,
       receiverId,
-      message,
+      messageType,
+      content: content || '',
+      url: url || '',
+      thumbnailUrl: thumbnailUrl || '',
     });
 
     // If the message was created, add its ID to the conversation
@@ -68,11 +82,14 @@ router.post('/send/:id', async (req, res) => {
           // Create a new, clean object for Firebase.
           // Convert all ObjectIds to simple strings using .toString()
           const messageForFirebase = {
-            message: newMessage.message,
             senderId: newMessage.senderId.toString(),
             receiverId: newMessage.receiverId.toString(),
+            messageType: newMessage.messageType,
+            content: newMessage.content,
+            url: newMessage.url,
+            thumbnailUrl: newMessage.thumbnailUrl,
             createdAt: new Date(), // Use a native JavaScript Date
-          };
+        };
           
           // Send the clean, plain object to Firestore
           await db.collection('messages').add(messageForFirebase);

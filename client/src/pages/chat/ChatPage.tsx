@@ -1,5 +1,5 @@
 // client/src/pages/chat/ChatPage.tsx
-import { useState, useEffect, type FormEvent } from 'react';
+import { useState, useEffect, type FormEvent, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api/api';
 import { isAxiosError } from 'axios';
@@ -9,6 +9,7 @@ import useGetUsers from "../../hooks/useGetUsers";
 import useConversation from "../../store/useConversation";
 import useAuthStore from '../../store/useAuthStore';
 import useGetMessages from "../../hooks/useGetMessages";
+import type { Message } from '../../types/Message'; // Import the Message type
 import useListenOnlineStatus from '../../hooks/useListenOnlineStatus'; 
 import useOnlineStore from '../../store/useOnlineStore'; 
 import useCallListener from '../../hooks/useCallListener';
@@ -19,20 +20,14 @@ import NotificationBell from '../../components/notifications/NotificationBell'; 
 import NotificationDropdown from '../../components/notifications/NotificationDropdown'; // Import the NotificationDropdown component
 import useNotificationListener from '../../hooks/useNotificationListener'; // Import the hook to listen for notifications
 
-// This is the type we get from MongoDB
-interface MongoMessage {
-  _id: string;
-  senderId: string;
-  receiverId: string;
-  message: string;
-  createdAt: string;
-}
-
 // This is the type we get from Firebase
 interface FirebaseMessage {
   senderId: string;
   receiverId: string;
-  message: string;
+  messageType: 'text' | 'image' | 'video' | 'audio';
+  content: string;
+  url: string;
+  thumbnailUrl: string;
   createdAt: Timestamp; // Firebase uses a specific Timestamp object
 }
 
@@ -50,6 +45,9 @@ const ChatPage = () => {
   // This loads the history from MongoDB
   const { messages, loading: messagesLoading, setMessages } = useGetMessages();
   const [newMessage, setNewMessage] = useState('');
+  const [isSending, setIsSending] = useState(false); // Add sending state for messages
+  const [isUploading, setIsUploading] = useState(false); // Add uploading state for file uploads
+  const fileInputRef = useRef<HTMLInputElement>(null); // Add ref for file input element
 
   // This hook listens for NEW real-time messages
   useEffect(() => {
@@ -63,7 +61,8 @@ const ChatPage = () => {
     );
 
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      const newMsgs: MongoMessage[] = [];
+      // --- UPDATE: Change type to FirebaseMessage ---
+      const newMsgs: Message[] = [];
       querySnapshot.forEach((doc) => {
         const data = doc.data() as FirebaseMessage;
         
@@ -71,6 +70,7 @@ const ChatPage = () => {
           (data.senderId === authUser._id && data.receiverId === selectedConversation._id) ||
           (data.senderId === selectedConversation._id && data.receiverId === authUser._id)
         ) {
+          // --- UPDATE: Spread operator now correctly includes all new fields ---
           newMsgs.push({
             ...data,
             _id: doc.id,
@@ -80,9 +80,8 @@ const ChatPage = () => {
       });
 
       if (newMsgs.length > 0) {
-        // --- THIS IS THE FIX ---
         // We must check for duplicates before adding.
-        setMessages((prevMessages: MongoMessage[]) => {
+        setMessages((prevMessages) => {
           // Create a Set of existing message IDs for quick lookup
           const existingIds = new Set(prevMessages.map(msg => msg._id));
           
@@ -164,30 +163,75 @@ const ChatPage = () => {
     }
   };
 
-  // This sends the message to our Express/Mongo backend
-  const handleSendMessage = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (newMessage.trim() === '' || !selectedConversation) return;
+  // --- UPDATE: This function is now correct ---
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedConversation) return;
+
+    setIsUploading(true);
+    const formData = new FormData();
+    formData.append('file', file);
 
     try {
-      // 1. Use the 'api' instance
-      // 2. Use the relative path
-      // 3. No headers/token needed, the interceptor adds it
+      // 1. Call the upload endpoint
+      const uploadRes = await api.post('/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      
+      const { fileType, url, thumbnailUrl } = uploadRes.data;
+
+      // 2. Send the message using the NEW format
       await api.post(
         `/messages/send/${selectedConversation._id}`,
-        { message: newMessage }
+        { 
+          messageType: fileType,
+          url: url,
+          thumbnailUrl: thumbnailUrl || '', // Send thumbnail if it exists
+          content: '' // No text content for files
+        }
+      );
+
+    } catch (error) {
+      if (isAxiosError(error) && error.response) {
+        console.error("Error uploading file:", error.response.data.error);
+      } else {
+        console.error("Error uploading file:", (error as Error).message);
+      }
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
+
+  // --- UPDATE: This function is now correct ---
+  const handleSendMessage = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    // Also check if we are uploading
+    if (newMessage.trim() === '' || !selectedConversation || isUploading || isSending) return;
+
+    setIsSending(true); // Use the isSending state
+    try {
+      // Send the message using the NEW format
+      await api.post(
+        `/messages/send/${selectedConversation._id}`,
+        { 
+          messageType: 'text',
+          content: newMessage // Send text in the 'content' field
+        } 
       );
       
       setNewMessage('');
-      // The server saves to Mongo and pushes to Firebase.
-      // Our listener will pick it up automatically.
     } catch (error) {
-      // 4. Add improved error handling
       if (isAxiosError(error) && error.response) {
-        console.error("Error sending message:", error.response.data.message);
+        // Corrected logging to see the real error from the backend
+        console.error("Error sending message:", error.response.data.error); 
       } else {
         console.error("Error sending message:", (error as Error).message);
       }
+    } finally {
+      setIsSending(false); // Unset the isSending state
     }
   };
 
@@ -200,10 +244,9 @@ const ChatPage = () => {
       {callInProgress && <VideoCall />}
 
       {/* Sidebar */}
-      {/* 2. Add 'flex flex-col' to the aside */}
       <aside className={`w-1/4 bg-gray-800 text-white p-4 flex flex-col ${callInProgress ? 'blur-sm' : ''}`}>
         
-        {/* 3. Create a header for the sidebar */}
+        {/* Create a header for the sidebar */}
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-bold">Users</h2>
           <div className="relative">
@@ -212,7 +255,7 @@ const ChatPage = () => {
           </div>
         </div>
 
-        {/* 4. Make the user list scrollable */}
+        {/* Make the user list scrollable */}
         <ul className="flex-1 overflow-y-auto">
           {usersLoading ? (
             <p>Loading users...</p>
@@ -221,7 +264,6 @@ const ChatPage = () => {
               // Check if this user is in the online list
               const isOnline = onlineUsers.includes(user._id);
 
-              // --- THIS IS THE FIX ---
               // We must explicitly 'return' the JSX
               return (
                 <li
@@ -241,12 +283,11 @@ const ChatPage = () => {
                   </div>
                 </li>
               );
-              // --- END OF FIX ---
             })
           )}
         </ul>
 
-        {/* 5. The logout button is pushed to the bottom */}
+        {/* The logout button is pushed to the bottom */}
         <button onClick={handleLogout} className="w-full mt-6 px-4 py-2 text-white bg-red-600 rounded-md hover:bg-red-700">
           Logout
         </button>
@@ -256,7 +297,7 @@ const ChatPage = () => {
       <main className="flex flex-col flex-1">
         {selectedConversation ? (
           <>
-            {/* --- THIS IS THE UPDATED HEADER --- */}
+            {/* --- HEADER with video call button--- */}
             <header className="p-4 bg-white border-b border-gray-200 flex justify-between items-center">
               <h2 className="text-xl font-bold">{selectedConversation.username}</h2>
               <button
@@ -286,43 +327,109 @@ const ChatPage = () => {
                 </p>
               )}
 
+              {/* --- UPDATE: New Message Rendering Logic --- */}
               {!messagesLoading && messages.map((msg) => {
                 const fromMe = msg.senderId === authUser?._id;
+
+                // Helper function to decide what to render
+                const renderMessageContent = () => {
+                  switch (msg.messageType) {
+                    case 'image':
+                      return (
+                        <a href={msg.url} target="_blank" rel="noopener noreferrer">
+                          <img 
+                            src={msg.thumbnailUrl || msg.url} // Show thumbnail in chat
+                            alt="Uploaded content" 
+                            className="max-w-[250px] rounded-lg cursor-pointer"
+                          />
+                        </a>
+                      );
+                    case 'video':
+                      return (
+                        <video 
+                          controls 
+                          src={msg.url} 
+                          className="max-w-[250px] rounded-lg"
+                        >
+                          Your browser does not support the video tag.
+                        </video>
+                      );
+                    case 'audio':
+                      return (
+                        <audio controls src={msg.url}>
+                          Your browser does not support the audio element.
+                        </audio>
+                      );
+                    case 'text':
+                    default:
+                      return msg.content || (msg as any).message; // Use content, not message
+                  }
+                };
+
                 return (
-                  <div key={msg._id} className={`mb-4 ${fromMe ? 'text-right' : 'text-left'}`}>
+                  <div key={msg._id} className={`flex mb-4 ${fromMe ? 'justify-end' : 'justify-start'}`}>
                     <div className={`p-2 rounded-lg inline-block ${fromMe ? 'bg-indigo-500 text-white' : 'bg-gray-300 text-black'}`}>
-                      {msg.message}
+                        {/* Render the correct content */}
+                      {renderMessageContent()}
                     </div>
                   </div>
                 );
               })}
             </div>
             
+            {/* --- UPDATE: Input Form now uses isSending --- */}
             <div className="p-4 bg-white border-t border-gray-200">
               <form onSubmit={handleSendMessage} className="flex">
+                
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isUploading || isSending} // Disable if uploading or sending
+                  className="p-2 text-gray-500 rounded-full hover:bg-gray-200 disabled:opacity-50"
+                  title="Send a file"
+                >
+                    {isUploading ? (
+                      <div className="w-6 h-6 border-4 border-gray-300 border-t-indigo-500 rounded-full animate-spin"></div>
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
+                      <path fillRule="evenodd" d="M18.97 3.659a2.25 2.25 0 0 0-3.182 0l-10.121 10.121a.75.75 0 0 0 1.06 1.061l10.121-10.121a.75.75 0 0 1 1.06 1.06l-10.12 10.121a2.25 2.25 0 0 1-3.182 0l-2.625-2.625a2.25 2.25 0 0 1 0-3.182l10.121-10.121a3.75 3.75 0 0 1 5.303 0l4.09 4.09a3.75 3.75 0 0 1 0 5.303l-4.09 4.09a.75.75 0 0 1-1.06-1.061l4.09-4.09a2.25 2.25 0 0 0 0-3.182l-4.09-4.09Z" clipRule="evenodd" />
+      m          </svg>
+                    )}
+                </button>
+
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileChange}
+                  className="hidden"
+                  accept="image/*,video/*,audio/*"
+                />
+
                 <input
                   type="text"
                   placeholder="Type your message..."
-                  className="flex-1 px-4 py-2 border border-gray-300 rounded-l-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="flex-1 px-4 py-2 border border-gray-300 rounded-l-md focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100"
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
+                  disabled={isUploading || isSending} // Disable if uploading or sending
                 />
                 <button
-                  type="submit"
-                  className="px-6 py-2 text-white bg-indigo-600 rounded-r-md hover:bg-indigo-700 focus:outline-none"
-                >
-                  Send
-                </button>
-              </form>
-            </div>
-          </>
-        ) : (
-          <div className="flex items-center justify-center h-full">
-            <p className="text-xl text-gray-500">Select a user to start chatting</p>
-          </div>
-        )}
-      </main>
-    </div>
+                	type="submit"
+                	className="px-6 py-2 text-white bg-indigo-600 rounded-r-md hover:bg-indigo-700 focus:outline-none disabled:bg-indigo-400"
+                  disabled={isUploading || isSending || newMessage.trim() === ''} // Disable
+            	  >
+              	  {isSending ? '...' : 'Send'}
+            	  </button>
+      	        </form>
+    	      </div>
+      	    </>
+    	  ) : (
+      	    <div className="flex items-center justify-center h-full">
+      	      <p className="text-xl text-gray-500">Select a user to start chatting</p>
+      	    </div>
+    	  )}
+  	  </main>
+  	</div>
   );
 };
 
