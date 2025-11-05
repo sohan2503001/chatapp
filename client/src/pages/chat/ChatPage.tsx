@@ -41,7 +41,7 @@ const ChatPage = () => {
   useListenOnlineStatus(); // Start listening to online status changes
   useCallListener(); // Start listening for incoming calls
   useNotificationListener(); // Start listening for notifications
-  const { isReceivingCall, callInProgress, setCallInProgress, setRoomName } = useCallStore(); // Get the state to check if receiving a call
+  const { isReceivingCall, callInProgress, setCallInProgress, setCallDetails} = useCallStore(); // Get the state to check if receiving a call
   
   // This loads the history from MongoDB
   const { messages, loading: messagesLoading, setMessages } = useGetMessages();
@@ -106,39 +106,72 @@ const ChatPage = () => {
     
   }, [selectedConversation, authUser, setMessages]);
 
+  // Function to log call details to backend
+  const logCall = async (status: 'declined' | 'completed' | 'missed', startTime: Date, endTime: Date) => {
+    if (!selectedConversation || !authUser) return;
+
+    let duration = 0;
+    if (status === 'completed') {
+      duration = (endTime.getTime() - startTime.getTime()) / 1000; // duration in seconds
+    }
+
+    try {
+      await api.post('/callhistory/log', { // Use the correct path
+        initiator: authUser._id,
+        receiver: selectedConversation._id,
+        callType: 'video', // Hardcoding for now
+        status: status,
+        startTime: startTime,
+        endTime: endTime,
+        duration: duration,
+      });
+    } catch (error) {
+      console.error("Error logging call:", error);
+    }
+  };
+
   const handleVideoCall = async () => {
     if (!selectedConversation || !authUser) return;
 
     try {
       const roomName = Math.random().toString(36).substring(2, 15);
-      const callDocRef = doc(db, 'calls', selectedConversation._id);
       
-      // Set the initial call document
+      // The Firestore doc is named after the *receiver's* ID
+      const callDocRef = doc(db, 'calls', selectedConversation._id);
+      const callStartTime = new Date(); // Note the start time
+
       await setDoc(callDocRef, {
         callerId: authUser._id,
         callerName: authUser.username,
         receiverId: selectedConversation._id,
         status: 'ringing',
-        createdAt: Timestamp.now(),
+        createdAt: Timestamp.now(), // Make sure Timestamp is imported
         roomName: roomName,
       });
       
-      // --- 2. This is the new logic for the caller ---
-      // Listen for changes to the call document
       const unsubscribe = onSnapshot(callDocRef, (docSnapshot) => {
         if (docSnapshot.exists()) {
           const callData = docSnapshot.data();
           
           if (callData.status === 'accepted') {
-            // Call was accepted! Join the room.
-            setRoomName(callData.roomName); // Room name is the doc ID
+            // Call was accepted! Set details in the store
+            setCallDetails({
+              initiator: authUser._id,
+              receiver: selectedConversation._id,
+              callType: 'video',
+              startTime: callStartTime,
+              isInitiator: true, // This user is the caller
+              roomName: callData.roomName,
+              callerName: authUser.username,
+            });
             setCallInProgress(true);
-            unsubscribe(); // Stop listening
+            unsubscribe();
           }
         } else {
           // Document was deleted (call was declined)
-          alert(`${selectedConversation.username} declined the call.`);
-          unsubscribe(); // Stop listening
+          // Log it as 'missed' from the caller's side.
+          logCall('missed', callStartTime, new Date());
+          unsubscribe();
         }
       });
       
@@ -260,10 +293,21 @@ const ChatPage = () => {
         {/* Create a header for the sidebar */}
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-bold">Users</h2>
-          <div className="relative">
-            <NotificationBell />
-            <NotificationDropdown />
-          </div>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => navigate('/call-history')}
+              className="p-2 rounded-full hover:bg-gray-700"
+              title="Call History"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+              </svg>
+            </button>
+            <div className="relative">
+              <NotificationBell />
+              <NotificationDropdown />
+            </div>
+            </div>
         </div>
 
         {/* Make the user list scrollable */}

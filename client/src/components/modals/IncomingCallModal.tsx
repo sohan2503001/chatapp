@@ -1,52 +1,64 @@
 // client/src/components/modals/IncomingCallModal.tsx
-import { doc, updateDoc, deleteDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
-import useCallStore from '../../store/useCallStore';
+import { doc, updateDoc, deleteDoc } from "firebase/firestore";
+import { db } from "../../firebase";
+import useCallStore from "../../store/useCallStore"; // 1. Using the correct store
 
 const IncomingCallModal = () => {
-  const { incomingCallData, setIncomingCall, setCallInProgress, setRoomName } = useCallStore();
-
-  if (!incomingCallData) return null;
-
-  const { callerName, receiverId, roomName } = incomingCallData; // Destructure roomName
+  // 2. Get the correct state and functions from the store
+  const { callData, setCallData } = useCallStore();
 
   const handleAccept = async () => {
-    // 1. Update the call doc status to 'accepted'
-    const callDocRef = doc(db, 'calls', receiverId);
-    await updateDoc(callDocRef, { status: 'accepted' });
-    
-    // --- 2. Update the store to join the call ---
-    setRoomName(roomName); // Set the room name from the call data
-    setCallInProgress(true);
-    
-    console.log('Call accepted');
-    setIncomingCall(null); // Close the modal
+    if (!callData) return;
+
+    try {
+      // 3. The doc ID is stored in callData.docId
+      const callDocRef = doc(db, "calls", callData.docId);
+      
+      // 4. Just update the status. The listener will handle the rest.
+      await updateDoc(callDocRef, {
+        status: "accepted",
+      });
+      
+    } catch (error) {
+      console.error("Error accepting call:", error);
+    }
   };
 
   const handleDecline = async () => {
-    // 1. Delete the call document from Firebase
-    const callDocRef = doc(db, 'calls', receiverId);
-    await deleteDoc(callDocRef);
-    
-    console.log('Call declined');
-    setIncomingCall(null); // Close the modal
+    if (!callData) return;
+
+    try {
+      const callDocRef = doc(db, "calls", callData.docId);
+      
+      // 5. Delete the doc. The listener will see this.
+      await deleteDoc(callDocRef);
+      
+    } catch (error) {
+      console.error("Error declining call:", error);
+    }
+
+    setCallData(null); // Also close the modal immediately
   };
+
+  if (!callData) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
       <div className="bg-white p-6 rounded-lg shadow-xl">
-        <h2 className="text-xl font-bold mb-4">Incoming Call...</h2>
-        <p className="mb-6 text-gray-700">{callerName} is calling you.</p>
-        <div className="flex justify-end space-x-4">
+        <h2 className="text-xl font-bold mb-4">Incoming Call</h2>
+        <p className="mb-6">
+          <span className="font-semibold">{callData.callerName}</span> is calling...
+        </p>
+        <div className="flex justify-around">
           <button
-            onClick={handleDecline}
-            className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
+            onClick={handleDecline} // handleDecline is read here
+            className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
           >
             Decline
           </button>
           <button
-            onClick={handleAccept}
-            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+            onClick={handleAccept} // handleAccept is read here
+            className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
           >
             Accept
           </button>
