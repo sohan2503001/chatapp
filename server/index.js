@@ -6,6 +6,7 @@ import cookieParser from 'cookie-parser';
 import authRoutes from './routes/auth.routes.js';
 import messageRoutes from './routes/message.routes.js';
 import userRoutes from './routes/user.routes.js';
+import uploadRoutes from './routes/upload.routes.js'; // Import upload routes
 import { protectRoute } from './middleware/protectRoute.js';
 
 dotenv.config();
@@ -23,6 +24,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/messages', protectRoute, messageRoutes);
 app.use('/api/users', protectRoute, userRoutes);
+app.use('/api/upload', protectRoute, uploadRoutes); //  Use upload routes with protection
 
 app.get('/', (req, res) => {
   res.send('API is running...');
