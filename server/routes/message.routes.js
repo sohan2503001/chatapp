@@ -7,22 +7,23 @@ import { db } from '../firebaseAdmin.js';
 const router = express.Router();
 
 // ## GET /api/messages/:id - Get messages between two users ##
-router.get('/:id', async (req, res) => {
+router.get('/:conversationId', async (req, res) => {
   try {
-    const { id: userToChatWithId } = req.params;
+    const { conversationId } = req.params;
     const senderId = req.user._id;
 
-    // Find the conversation containing both users' IDs
+    // Find the conversation
     const conversation = await Conversation.findOne({
-      participants: { $all: [senderId, userToChatWithId] },
-    }).populate('messages'); // .populate() replaces the message IDs with the actual message documents
+      _id: conversationId,
+      participants: { $in: [senderId] }, // Make sure user is in this conversation
+    }).populate('messages'); // Get all the message documents
 
-    // If no conversation exists, return an empty array
     if (!conversation) {
-      return res.status(200).json([]);
+      return res.status(404).json({ error: "Conversation not found or you're not a member" });
     }
 
     res.status(200).json(conversation.messages);
+
   } catch (error) {
     console.error("Error in getMessages controller: ", error.message);
     res.status(500).json({ error: "Internal server error" });
@@ -30,96 +31,93 @@ router.get('/:id', async (req, res) => {
 });
 
 // ## POST /api/messages/send/:id - Send a new message ##
-router.post('/send/:id', async (req, res) => {
+router.post('/send/:conversationId', async (req, res) => {
   try {
+    const { conversationId } = req.params;
+    const senderId = req.user._id;
     const { messageType, content, url, thumbnailUrl } = req.body;
-    const { id: receiverId } = req.params;
-    const senderId = req.user._id; // We get this from the protectRoute middleware
 
-    // Validate messageType and required fields
-    if (!messageType) {
-       return res.status(400).json({ error: "messageType is required" });
-    }
-    if (messageType === 'text' && !content) {
-      return res.status(400).json({ error: "Text content is required" });
-    }
-    if (messageType !== 'text' && !url) {
-      return res.status(400).json({ error: "File URL is required" });
-    }
+    // --- 1. Find the conversation ---
+    let conversation = await Conversation.findById(conversationId);
 
-    // Find the conversation between these two users
-    let conversation = await Conversation.findOne({
-      participants: { $all: [senderId, receiverId] },
-    });
-
-    // If no conversation exists, create a new one
     if (!conversation) {
-      conversation = await Conversation.create({
-        participants: [senderId, receiverId],
-      });
+      return res.status(404).json({ error: "Conversation not found" });
     }
 
-    // Create the new message
+    // --- 2. Check if the sender is actually a participant ---
+    if (!conversation.participants.includes(senderId)) {
+      return res.status(403).json({ error: "You are not a member of this conversation" });
+    }
+
+    // --- 3. Create the new message ---
     const newMessage = new Message({
       senderId,
-      receiverId,
+      conversationId,
       messageType,
       content: content || '',
       url: url || '',
       thumbnailUrl: thumbnailUrl || '',
       isSeen: false,
+      // Note: We don't set receiverId for group chats
     });
 
-    // If the message was created, add its ID to the conversation
-    if (newMessage) {
-      conversation.messages.push(newMessage._id);
+    // --- 4. Add message to conversation ---
+    conversation.messages.push(newMessage._id);
+    
+    // --- 5. Save to Firebase (with conversationId) ---
+    try {
+      const messageForFirebase = {
+        senderId: newMessage.senderId.toString(),
+        conversationId: newMessage.conversationId.toString(), // Add this
+        messageType: newMessage.messageType,
+        content: newMessage.content,
+        url: newMessage.url,
+        thumbnailUrl: newMessage.thumbnailUrl,
+        createdAt: new Date(),
+        isSeen: false,
+      };
+      
+      const newFirebaseDoc = await db.collection('messages').add(messageForFirebase);
+      newMessage.firebaseDocId = newFirebaseDoc.id; // Save Firebase ID
+
+    } catch (firebaseError) {
+      console.error("Error writing to Firebase:", firebaseError);
     }
     
-    // Save both the conversation and the new message in parallel
+    // --- 6. Save to MongoDB ---
     await Promise.all([conversation.save(), newMessage.save()]);
-
-    // ALSO send to Firebase Firestore for real-time updates
+    
+    // --- 7. Notification Logic (unchanged) ---
     try {
-          // Create a new, clean object for Firebase.
-          // Convert all ObjectIds to simple strings using .toString()
-          const messageForFirebase = {
-            senderId: newMessage.senderId.toString(),
-            receiverId: newMessage.receiverId.toString(),
-            messageType: newMessage.messageType,
-            content: newMessage.content,
-            url: newMessage.url,
-            thumbnailUrl: newMessage.thumbnailUrl,
-            createdAt: new Date(), // Use a native JavaScript Date
-            isSeen: false,
-        };
-
-        const newFirebaseDoc = await db.collection('messages').add(messageForFirebase); // Add to 'messages' collection in Firestore
-
-        newMessage.firebaseDocId = newFirebaseDoc.id; // Store the Firestore document ID in MongoDB
-
-        } catch (firebaseError) {
-          console.error("Error writing to Firebase:", firebaseError);
-        }
-
-        await Promise.all([conversation.save(), newMessage.save()]);
+      // We need to send a notification to every participant *except* the sender
       
-      // Create a notification for the receiver
-    try {
+      const notificationPromises = conversation.participants
+        .filter(participantId => participantId.toString() !== senderId.toString())
+        .map(receiverId => {
+          
+          // Create a notification for each person
           const notificationData = {
-            receiverId: newMessage.receiverId.toString(),
-            senderId: newMessage.senderId.toString(),
-            senderName: req.user.username, // We have this from the protectRoute middleware
+            receiverId: receiverId.toString(), // The ID of the person to notify
+            senderId: senderId.toString(),
+            senderName: req.user.username,
             type: 'NEW_MESSAGE',
+            messageContent: messageType === 'text' ? (content.substring(0, 30) + '...') : 'Sent a file',
+            conversationId: conversationId, // So we can navigate to the chat
             isRead: false,
             createdAt: new Date(),
           };
-          // We'll create a new document in a 'notifications' collection
-          await db.collection('notifications').add(notificationData);
-        } catch (notificationError) {
-          console.error("Error writing to Firebase 'notifications':", notificationError);
-        }
+          return db.collection('notifications').add(notificationData);
+        });
+
+      // Wait for all notifications to be created
+      await Promise.all(notificationPromises);
+
+    } catch (notificationError) {
+        console.error("Error writing to Firebase 'notifications':", notificationError);
+    }
     
     res.status(201).json(newMessage);
+
   } catch (error) {
     console.error("Error in sendMessage controller: ", error.message);
     res.status(500).json({ error: "Internal server error" });

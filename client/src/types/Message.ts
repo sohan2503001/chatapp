@@ -1,8 +1,9 @@
 // client/src/types/Message.ts
 export interface Message {
   _id: string;
+  conversationId: string;
   senderId: string;
-  receiverId: string;
+  receiverId?: string;
   messageType: 'text' | 'image' | 'video' | 'audio';
   content: string; // For text
   url: string; // For media

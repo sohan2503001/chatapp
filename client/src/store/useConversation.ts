@@ -1,15 +1,10 @@
 // client/src/store/useConversation.ts
 import { create } from 'zustand';
-
-interface User {
-  _id: string;
-  username: string;
-  email: string;
-}
+import type { Conversation } from '../types/Conversation'; // Import our new type
 
 interface ConversationState {
-  selectedConversation: User | null;
-  setSelectedConversation: (conversation: User | null) => void;
+  selectedConversation: Conversation | null;
+  setSelectedConversation: (conversation: Conversation | null) => void;
 }
 
 const useConversation = create<ConversationState>((set) => ({

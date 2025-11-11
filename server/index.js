@@ -9,6 +9,7 @@ import userRoutes from './routes/user.routes.js';
 import uploadRoutes from './routes/upload.routes.js'; // Import upload routes
 import callHistoryRoutes from './routes/callHistory.routes.js'; // Import call history routes
 import { protectRoute } from './middleware/protectRoute.js';
+import conversationRoutes from './routes/conversation.routes.js';
 
 dotenv.config();
 
@@ -27,6 +28,7 @@ app.use('/api/messages', protectRoute, messageRoutes);
 app.use('/api/users', protectRoute, userRoutes);
 app.use('/api/upload', protectRoute, uploadRoutes); //  Use upload routes with protection
 app.use('/api/callhistory', callHistoryRoutes);
+app.use('/api/conversations', conversationRoutes);
 
 app.get('/', (req, res) => {
   res.send('API is running...');

@@ -1,31 +1,27 @@
 // client/src/hooks/useGetUsers.ts
 import { useEffect, useState } from "react";
-import api from '../api/api';
-import { isAxiosError } from 'axios';
-
-interface User {
-  _id: string;
-  username: string;
-  email: string;
-}
+import api from "../api/api";
+import { isAxiosError } from "axios";
+import type { User } from "../types/User"; // --- 1. Import the new type ---
 
 const useGetUsers = () => {
   const [loading, setLoading] = useState(false);
+  // --- 2. Use the new User type for state ---
   const [users, setUsers] = useState<User[]>([]);
 
   useEffect(() => {
     const getUsers = async () => {
       setLoading(true);
       try {
-        // 1. Use the 'api' instance. No headers or token needed.
-        const res = await api.get('/users');
-        setUsers(res.data);
+        const res = await api.get('/users'); // Fetch all users
+        
+        // --- 3. Set state with the new Message type ---
+        setUsers(res.data as User[]); 
       } catch (error) {
-        // 2. Add improved error handling
         if (isAxiosError(error) && error.response) {
-          console.error("Error fetching users:", error.response.data.message);
+          console.error("Error getting users:", error.response.data.message);
         } else {
-          console.error("Error fetching users:", (error as Error).message);
+          console.error("Error getting users:", (error as Error).message);
         }
       } finally {
         setLoading(false);
@@ -33,7 +29,7 @@ const useGetUsers = () => {
     };
 
     getUsers();
-  }, [setUsers]); // 3. Add setUsers to the dependency array
+  }, []); // Runs once on mount
 
   return { users, loading };
 };

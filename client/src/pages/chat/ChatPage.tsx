@@ -5,7 +5,10 @@ import api from '../../api/api';
 import { isAxiosError } from 'axios';
 import { collection, query, orderBy, onSnapshot, Timestamp, where, doc, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
+
 import useGetUsers from "../../hooks/useGetUsers";
+import useGetConversations from "../../hooks/useGetConversations";
+import type { Conversation } from '../../types/Conversation';
 import useConversation from "../../store/useConversation";
 import useAuthStore from '../../store/useAuthStore';
 import useGetMessages from "../../hooks/useGetMessages";
@@ -22,9 +25,13 @@ import useNotificationListener from '../../hooks/useNotificationListener'; // Im
 import MediaViewerModal from '../../components/modals/MediaViewerModal';
 import useTypingStore from '../../store/useTypingStore';       // Import typing store
 import useTypingListener from '../../hooks/useTypingListener'; // Import typing listener
+import CreateGroupModal from '../../components/modals/CreateGroupModal';
+import { DefaultUserAvatar, DefaultGroupAvatar } from '../../components/sidebar/DefaultAvatar';
+import type { User } from '../../types/User'; // Import the User type
 
 // This is the type we get from Firebase
 interface FirebaseMessage {
+  conversationId: string;
   senderId: string;
   receiverId: string;
   messageType: 'text' | 'image' | 'video' | 'audio';
@@ -38,7 +45,11 @@ interface FirebaseMessage {
 
 const ChatPage = () => {
   const navigate = useNavigate();
+
   const { users, loading: usersLoading } = useGetUsers();
+  const { conversations, loading: conversationsLoading, setConversations } = useGetConversations();
+
+  const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false);
   const { selectedConversation, setSelectedConversation } = useConversation();
   const { authUser, setToken, setAuthUser } = useAuthStore();
   const { onlineUsers } = useOnlineStore(); // To access online users
@@ -84,7 +95,6 @@ const ChatPage = () => {
       console.error("Error marking message as seen:", error);
     }
   };
-  // --- END: SEEN INDICATOR CODE ---
 
   // Handle input change for typing indicator
   const handleTypingChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -116,12 +126,18 @@ const ChatPage = () => {
       querySnapshot.docChanges().forEach((change) => {
         const data = change.doc.data() as FirebaseMessage;
 
+        // Check if the message's conversationId matches the selected conversation
+        if (data.conversationId !== selectedConversation._id) {
+          return; // Ignore messages not for this chat
+        }
+
+        // --- Now we construct the message ---
         const msg: Message = {
-          // Manually construct the Message type
           _id: change.doc.id,
           firebaseDocId: change.doc.id,
+          conversationId: data.conversationId, // Add this
           senderId: data.senderId,
-          receiverId: data.receiverId,
+          // receiverId: data.receiverId, // This might be undefined, that's fine
           messageType: data.messageType,
           content: data.content,
           url: data.url,
@@ -129,13 +145,7 @@ const ChatPage = () => {
           isSeen: data.isSeen || false,
           createdAt: data.createdAt.toDate().toISOString(),
         };
-
-        // Check if message is part of the current conversation
-        const isCurrentConversation = (msg.senderId === authUser._id && msg.receiverId === selectedConversation._id) ||
-                                      (msg.senderId === selectedConversation._id && msg.receiverId === authUser._id);
         
-        if (!isCurrentConversation) return; // Ignore messages not for this chat
-
         // --- THIS IS THE NEW LOGIC ---
         if (change.type === "added") {
           newMsgs.push(msg);
@@ -187,20 +197,64 @@ const ChatPage = () => {
     
   }, [selectedConversation, authUser, setMessages]);
 
-  // Function to log call details to backend
+  // Helper to get the other participant in a one-on-one chat
+  const getOtherParticipant = (conversation: Conversation) => {
+    if (!authUser || conversation.isGroupChat) {
+      return null;
+    }
+    const validParticipants = conversation.participants.filter(p => p);
+    return validParticipants.find(p => p._id !== authUser._id);
+  };
+
+  // --- 5. NEW: Click handler for 1-on-1 chats ---
+  // This will find or create the chat, then select it.
+  const handleSelectChat = async (user: User) => {
+    // First, check if a 1-on-1 conversation with this user already exists
+    const existingChat = conversations.find(c => 
+      !c.isGroupChat && c.participants.some(p => p && p._id === user._id)
+    );
+
+    if (existingChat) {
+      setSelectedConversation(existingChat);
+      return;
+    }
+
+    // If it doesn't exist, create it via the API
+    try {
+      const res = await api.post('/conversations/find-or-create', { 
+        receiverId: user._id 
+      });
+      const newConversation: Conversation = res.data;
+      
+      // Add this new chat to our list and select it
+      setConversations(prev => [newConversation, ...prev]);
+      setSelectedConversation(newConversation);
+      
+    } catch (error) {
+      console.error("Error finding or creating chat:", error);
+      alert("Could not start chat.");
+    }
+  };
+
+  // --- 6. Update video call, log call, and delete group logic to use getOtherParticipant ---
   const logCall = async (status: 'declined' | 'completed' | 'missed', startTime: Date, endTime: Date) => {
     if (!selectedConversation || !authUser) return;
+    
+    // Get the correct receiver ID
+    const otherUser = getOtherParticipant(selectedConversation);
+    const receiverId = otherUser ? otherUser._id : null;
+    if (!receiverId) return; // Can't log a call for a group
 
     let duration = 0;
     if (status === 'completed') {
-      duration = (endTime.getTime() - startTime.getTime()) / 1000; // duration in seconds
+      duration = (endTime.getTime() - startTime.getTime()) / 1000;
     }
 
     try {
-      await api.post('/callhistory/log', { // Use the correct path
+      await api.post('/callhistory/log', {
         initiator: authUser._id,
-        receiver: selectedConversation._id,
-        callType: 'video', // Hardcoding for now
+        receiver: receiverId, // Use the correct receiver ID
+        callType: 'video',
         status: status,
         startTime: startTime,
         endTime: endTime,
@@ -212,36 +266,36 @@ const ChatPage = () => {
   };
 
   const handleVideoCall = async () => {
-    if (!selectedConversation || !authUser) return;
+    if (!selectedConversation || !authUser || selectedConversation.isGroupChat) {
+      return;
+    }
+    const otherUser = getOtherParticipant(selectedConversation);
+    if (!otherUser) return;
 
     try {
       const roomName = Math.random().toString(36).substring(2, 15);
-      
-      // The Firestore doc is named after the *receiver's* ID
-      const callDocRef = doc(db, 'calls', selectedConversation._id);
-      const callStartTime = new Date(); // Note the start time
+      const callDocRef = doc(db, 'calls', otherUser._id); // Call the receiver's ID
+      const callStartTime = new Date();
 
       await setDoc(callDocRef, {
         callerId: authUser._id,
         callerName: authUser.username,
-        receiverId: selectedConversation._id,
+        receiverId: otherUser._id, // Set the receiver ID
         status: 'ringing',
-        createdAt: Timestamp.now(), // Make sure Timestamp is imported
+        createdAt: Timestamp.now(),
         roomName: roomName,
       });
       
       const unsubscribe = onSnapshot(callDocRef, (docSnapshot) => {
         if (docSnapshot.exists()) {
           const callData = docSnapshot.data();
-          
           if (callData.status === 'accepted') {
-            // Call was accepted! Set details in the store
             setCallDetails({
               initiator: authUser._id,
-              receiver: selectedConversation._id,
+              receiver: otherUser._id, // Use otherUser._id
               callType: 'video',
               startTime: callStartTime,
-              isInitiator: true, // This user is the caller
+              isInitiator: true,
               roomName: callData.roomName,
               callerName: authUser.username,
             });
@@ -249,13 +303,10 @@ const ChatPage = () => {
             unsubscribe();
           }
         } else {
-          // Document was deleted (call was declined)
-          // Log it as 'missed' from the caller's side.
           logCall('missed', callStartTime, new Date());
           unsubscribe();
         }
       });
-      
     } catch (error) {
       console.error("Error starting call:", error);
     }
@@ -357,6 +408,37 @@ const ChatPage = () => {
     }
   };
 
+  // --- NEW FUNCTION: Handle deleting a group ---
+  const handleDeleteGroup = async () => {
+    if (!selectedConversation || !selectedConversation.isGroupChat) return;
+
+    // Ask for confirmation
+    if (!window.confirm(`Are you sure you want to delete the group "${selectedConversation.groupName}"? This is permanent.`)) {
+      return;
+    }
+
+    try {
+      await api.delete(`/conversations/${selectedConversation._id}`);
+      
+      // Remove from the sidebar list
+      setConversations((prev) => prev.filter((c) => c._id !== selectedConversation._id));
+      
+      // Close the chat window
+      setSelectedConversation(null);
+
+    } catch (error) {
+      console.error("Error deleting group:", error);
+      alert('Failed to delete group. Only the admin can do this.');
+    }
+  };
+
+  // --- Split conversations into groups and 1-on-1s for rendering ---
+  const groupChats = conversations.filter(c => c.isGroupChat);
+  const oneOnOneChats = conversations.filter(c => !c.isGroupChat);
+  
+  // Filter out the authUser from the main user list
+  const otherUsers = users.filter(u => u._id !== authUser?._id);
+
   return (
     <div className="flex h-screen bg-gray-100 relative">
       {/* Render the media viewer modal if viewingMedia is set */}
@@ -374,13 +456,35 @@ const ChatPage = () => {
       {/* Show the Jitsi meeting if a call is in progress */}
       {callInProgress && <VideoCall />}
 
+      {/* --- NEW CODE: Create Group Modal --- */}
+      {isCreateGroupOpen && (
+        <CreateGroupModal
+          onClose={() => setIsCreateGroupOpen(false)}
+          onGroupCreated={(newGroup) => {
+            setConversations(prev => [newGroup, ...prev]);
+            setSelectedConversation(newGroup);
+          }}
+        />
+      )}
+
       {/* Sidebar */}
       <aside className={`w-1/4 bg-gray-800 text-white p-4 flex flex-col ${callInProgress || viewingMedia  ? 'blur-sm' : ''}`}>
         
         {/* Create a header for the sidebar */}
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-bold">Users</h2>
+
           <div className="flex items-center space-x-2">
+            <button
+              onClick={() => setIsCreateGroupOpen(true)}
+              className="p-2 rounded-full hover:bg-gray-700"
+              title="Create new group"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 0 0 3.741-.479 3 3 0 0 0-4.682-2.72m.94 3.198.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0 1 12 21c-2.17 0-4.207-.576-5.963-1.584A9.06 9.06 0 0 1 6 18.719m12 0a9.06 9.06 0 0 0-6-2.185m0 0a9.06 9.06 0 0 0-6 2.185m0 0A9.06 9.06 0 0 1 6 18.719m0 0A9.06 9.06 0 0 1 6 18.719M6 21a9.06 9.06 0 0 0 6-2.185m0 0a9.06 9.06 0 0 0 6 2.185m0 0a9.06 9.06 0 0 1 6 2.185m0 0A9.06 9.06 0 0 1 6 21m0 0a9.06 9.06 0 0 0 6-2.185m0 0a9.06 9.06 0 0 0 6 2.185m0 0a9.06 9.06 0 0 1 6 2.185m0 0A9.06 9.06 0 0 1 6 21m0 0a9.06 9.06 0 0 0 6-2.185m0 0a9.06 9.06 0 0 0 6 2.185m0 0a9.06 9.06 0 0 1 6 2.185m0 0A9.06 9.06 0 0 1 6 21m0 0a9.06 9.06 0 0 0 6-2.185m0 0a9.06 9.06 0 0 0 6 2.185m0 0a9.06 9.06 0 0 1 6 2.185m0 0A9.06 9.06 0 0 1 6 21M6 21a9.06 9.06 0 0 0 6-2.185M12 12a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm0 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm0 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm0 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />
+              </svg>
+            </button>
+            
             <button
               onClick={() => navigate('/call-history')}
               className="p-2 rounded-full hover:bg-gray-700"
@@ -397,39 +501,71 @@ const ChatPage = () => {
             </div>
         </div>
 
-        {/* Make the user list scrollable */}
-        <ul className="flex-1 overflow-y-auto">
-          {usersLoading ? (
-            <p>Loading users...</p>
+        {/* --- UPDATE the user/conversation list --- */}
+        <div className="flex-1 overflow-y-auto space-y-1">
+          {conversationsLoading || usersLoading ? (
+            <p className="p-2">Loading...</p>
           ) : (
-            users.map((user) => {
-              // Check if this user is in the online list
-              const isOnline = onlineUsers.includes(user._id);
+            <>
+              {/* --- Group Chats List --- */}
+              {groupChats.length > 0 && (
+                <div className="pt-2">
+                  <h3 className="px-2 text-xs font-semibold text-gray-400 uppercase">Groups</h3>
+                  <ul className="space-y-1">
+                    {groupChats.map((convo) => {
+                      const isSelected = selectedConversation?._id === convo._id;
+                      return (
+                        <li
+                          key={convo._id}
+                          onClick={() => setSelectedConversation(convo)}
+                          className={`p-2 rounded-md cursor-pointer flex items-center space-x-3 ${isSelected ? "bg-gray-600" : "hover:bg-gray-700"}`}
+                        >
+                          <div className="relative">
+                            <DefaultGroupAvatar />
+                          </div>
+                          <span className="font-medium">{convo.groupName}</span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
 
-              // We must explicitly 'return' the JSX
-              return (
-                <li
-                  key={user._id}
-                  onClick={() => setSelectedConversation(user)}
-                  className={`p-2 rounded-md cursor-pointer hover:bg-gray-700 ${
-                    selectedConversation?._id === user._id ? "bg-gray-600" : ""
-                  }`}
-                >
-                  <div className="flex items-center space-x-2">
-                    <div
-                      className={`w-3 h-3 rounded-full ${
-                        isOnline ? 'bg-green-500' : 'bg-gray-500'
-                      }`}
-                    ></div>
-                    <span>{user.username}</span>
-                  </div>
-                </li>
-              );
-            })
+              {/* --- 1-on-1 Users List --- */}
+              <div className="pt-4">
+                <h3 className="px-2 text-xs font-semibold text-gray-400 uppercase">Direct Messages</h3>
+                <ul className="space-y-1">
+                  {otherUsers.map((user) => {
+                    // Check if a 1-on-1 chat is selected
+                    const isSelected = selectedConversation?._id === oneOnOneChats.find(c => c.participants.some(p => p && p._id === user._id))?._id;
+                    const isOnline = onlineUsers.includes(user._id);
+
+                    return (
+                      <li
+                        key={user._id}
+                        onClick={() => handleSelectChat(user)}
+                        className={`p-2 rounded-md cursor-pointer flex items-center space-x-3 ${isSelected ? "bg-gray-600" : "hover:bg-gray-700"}`}
+                      >
+                        <div className="relative">
+                          {user.profilePic ? (
+                            <img src={user.profilePic} alt={user.username} className="w-10 h-10 rounded-full object-cover" />
+                          ) : (
+                            <DefaultUserAvatar />
+                          )}
+                          {isOnline && (
+                            <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-gray-800"></span>
+                          )}
+                        </div>
+                        <span className="font-medium">{user.username}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            </>
           )}
-        </ul>
+        </div>
 
-        {/* The logout button is pushed to the bottom */}
         <button onClick={handleLogout} className="w-full mt-6 px-4 py-2 text-white bg-red-600 rounded-md hover:bg-red-700">
           Logout
         </button>
@@ -441,23 +577,46 @@ const ChatPage = () => {
           <>
             {/* --- HEADER with video call button--- */}
             <header className="p-4 bg-white border-b border-gray-200 flex justify-between items-center">
-              <h2 className="text-xl font-bold">{selectedConversation.username}</h2>
-              <button
-                onClick={handleVideoCall}
-                className="p-2 rounded-full hover:bg-gray-200"
-                title="Start video call"
-              >
-                {/* A simple video camera icon using SVG */}
-                <svg 
-                  xmlns="http://www.w3.org/2000/svg" 
-                  viewBox="0 0 24 24" 
-                  fill="currentColor" 
-                  className="w-6 h-6 text-gray-700"
+              <h2 className="text-xl font-bold">
+                {selectedConversation.isGroupChat 
+                  ? selectedConversation.groupName 
+                  : getOtherParticipant(selectedConversation)?.username
+                }
+              </h2>
+            
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={handleVideoCall}
+                  // --- 8. Disable video calls for groups (for now) ---
+                  disabled={selectedConversation.isGroupChat}
+                  className="p-2 rounded-full hover:bg-gray-200 disabled:text-gray-300"
+                  title={selectedConversation.isGroupChat ? "Video call not supported in groups" : "Start video call"}
                 >
-                  <path d="M4.5 4.5a3 3 0 0 0-3 3v9a3 3 0 0 0 3 3h12a3 3 0 0 0 3-3v-9a3 3 0 0 0-3-3h-12Z" />
-                  <path d="M18 7.5a.75.75 0 0 0-1.5 0v3a.75.75 0 0 0 1.5 0v-3ZM21.75 9a.75.75 0 0 0-.75-.75h-1.5a.75.75 0 0 0 0 1.5h1.5a.75.75 0 0 0 .75-.75Z" />
-                </svg>
-              </button>
+
+                  {/* A simple video camera icon using SVG */}
+                  <svg 
+                    xmlns="http://www.w3.org/2000/svg" 
+                    viewBox="0 0 24 24" 
+                    fill="currentColor" 
+                    className="w-6 h-6 text-gray-700"
+                  >
+                    <path d="M4.5 4.5a3 3 0 0 0-3 3v9a3 3 0 0 0 3 3h12a3 3 0 0 0 3-3v-9a3 3 0 0 0-3-3h-12Z" />
+                    <path d="M18 7.5a.75.75 0 0 0-1.5 0v3a.75.75 0 0 0 1.5 0v-3ZM21.75 9a.75.75 0 0 0-.75-.75h-1.5a.75.75 0 0 0 0 1.5h1.5a.75.75 0 0 0 .75-.75Z" />
+                  </svg>
+                </button>
+
+                {selectedConversation.isGroupChat && selectedConversation.groupAdmin._id === authUser?._id && (
+                    <button
+                      onClick={handleDeleteGroup}
+                      className="p-2 rounded-full hover:bg-gray-200 text-red-500"
+                      title="Delete Group"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12.576 0H3.398c-.621 0-1.175.055-1.7.158L2.036 6.165a2.25 2.25 0 0 0 .216 2.03m15.853-2.062a2.25 2.25 0 0 0 .216-2.03l-.38-1.018a1.875 1.875 0 0 0-1.7-.158H6.641a1.875 1.875 0 0 0-1.7.158l-.38 1.018a2.25 2.25 0 0 0 .216 2.03m15.853 0-1.018 3.869a2.25 2.25 0 0 1-2.14 1.761H7.141a2.25 2.25 0 0 1-2.14-1.761L4.084 5.79m15.853 0a48.108 48.108 0 0 0-3.478-.397m-12.576 0H3.398c-.621 0-1.175.055-1.7.158L2.036 6.165a2.25 2.25 0 0 0 .216 2.03m15.853-2.062a2.25 2.25 0 0 0 .216-2.03l-.38-1.018a1.875 1.875 0 0 0-1.7-.158H6.641a1.875 1.875 0 0 0-1.7.158l-.38 1.018a2.25 2.25 0 0 0 .216 2.03m15.853 0-1.018 3.869a2.25 2.25 0 0 1-2.14 1.761H7.141a2.25 2.25 0 0 1-2.14-1.761L4.084 5.79" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
             </header>
             
             <div className="flex-1 p-6 overflow-y-auto">
